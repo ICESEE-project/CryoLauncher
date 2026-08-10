@@ -33,9 +33,9 @@
 
   <text x="20" y="224" class="layer">GATEWAY</text>
   <rect x="180" y="174" width="840" height="108" rx="14" fill="#d7edf0" stroke="#478a9c" stroke-width="2" filter="url(#shadow)"/>
-  <text x="600" y="207" text-anchor="middle" class="box-title">Nginx + aiohttp gateway</text>
-  <text x="600" y="235" text-anchor="middle" class="body">HTTP/WebSocket routing · authentication · application isolation</text>
-  <text x="600" y="260" text-anchor="middle" class="body">saved configurations · experiment records · documentation</text>
+  <text x="600" y="207" text-anchor="middle" class="box-title">Nginx routing layer</text>
+  <text x="600" y="235" text-anchor="middle" class="body">aiohttp application gateway · FastAPI connector relay · HTTP/WebSocket proxying</text>
+  <text x="600" y="260" text-anchor="middle" class="body">authentication · saved configurations · experiment records · documentation</text>
 
   <path d="M360 282 L286 330" class="arrow"/>
   <path d="M600 282 L600 330" class="arrow"/>

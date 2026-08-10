@@ -33,7 +33,10 @@ ice-sheet models, **ICESEE** for ensemble-based state and parameter estimation,
 and **LIVIST** for exploring Antarctic englacial-temperature products. A shared
 gateway supplies navigation, documentation, user workspaces, reusable
 configurations, experiment records, and routes to local, remote, Slurm-managed,
-and cloud execution environments.
+and cloud execution environments. A FastAPI relay and workstation connector
+bridge the browser applications to protected HPC systems without requiring an
+inbound connection from the public platform to the user's workstation or
+cluster.
 
 CryoStack grew from deployment tooling for the Ice Sheet State and Parameter
 Estimator (ICESEE) [@kyanjo2026icesee] into a broader platform for the
@@ -142,6 +145,72 @@ and Slurm operations then occur from the connector using the user's existing
 network and institutional access. The platform also includes deployment
 configurations for cloud-hosted Slurm resources.
 
+## HPC connector and command relay
+
+The HPC bridge is a shared infrastructure component used by both ICESEE and
+CryoLauncher (Figure 2). It separates scientific workflow construction in the
+hosted application from privileged network operations in the user's computing
+environment. Four processes participate in a connector-mediated run:
+
+1. The ICESEE or CryoLauncher Voilà application creates a connector session by
+   sending `POST /connector/session` and receives a random session identifier
+   and WebSocket path.
+2. Nginx routes `/connector/` HTTP and WebSocket traffic to a FastAPI relay
+   served by Uvicorn on an internal port. The relay records which connector is
+   online for each session and maintains pending command futures in memory.
+3. A connector process on the user's workstation opens an **outbound** WSS
+   connection to `/connector/ws/{session_id}`. The workstation may already be
+   connected to an institutional VPN and can reach the cluster login node using
+   the user's SSH configuration.
+4. The application sends a typed command and JSON payload to
+   `POST /connector/command/{session_id}`. The relay assigns a unique command
+   identifier and forwards the message over the matching WebSocket. The
+   connector executes the operation, returns a result carrying the same
+   identifier, and the relay resolves the waiting HTTP request.
+
+![CryoStack HPC bridge. ICESEE and CryoLauncher send session-scoped commands to a FastAPI relay. A workstation connector maintains an outbound WebSocket and performs SSH, rsync, and Slurm operations against an authorized cluster.](cryostack_hpc_bridge.png){ width=95% }
+
+**Figure 2:** Connector-mediated command and data flow between CryoStack and a
+protected HPC resource. Solid blue arrows are HTTPS/WSS control messages;
+green arrows are SSH and rsync operations initiated from the workstation.
+
+The connector dispatch layer currently supports host and SSH tests, SSH command
+execution, rsync upload and download, archive staging and retrieval, Slurm
+submission, and SSH-key bootstrap. Submission helpers write the application
+configuration and generated batch script to a run directory, invoke `sbatch`,
+parse the returned job identifier, and use `squeue`, `sacct`, `scancel`, and log
+tailing for lifecycle management. ICESEE and CryoLauncher call the same relay
+client and remote-runner abstractions, but supply application-specific staging
+rules and launch commands. This avoids duplicating cluster connectivity code
+across scientific interfaces.
+
+FastAPI is used for the public command relay because it provides typed request
+models, asynchronous WebSocket handling, and HTTP error responses for offline
+connectors and timeouts. The repository also contains a local FastAPI service
+mode with typed endpoints for reachability checks, SSH, rsync, Slurm, and log
+tailing. The packaged desktop connector instead uses the outbound WebSocket
+client, which is better suited to workstations behind firewalls and network
+address translation.
+
+The relay transfers commands and results but does not perform SSH itself. SSH
+private keys remain on the workstation, and the connector invokes the local
+OpenSSH and rsync clients with key-only batch operation. Consequently, the
+public CryoStack host does not require direct network reachability to the HPC
+login node. This design does not bypass institutional controls: users must
+possess a valid cluster account, satisfy VPN and multifactor requirements where
+applicable, and authorize the connector key according to site policy.
+
+Key-only authentication is the normal execution path. CryoStack also contains
+an optional one-time bootstrap operation that sends a user-entered cluster
+password in the session command payload so that the workstation connector can
+install its public key. The interface does not persist the password and clears
+the field after use, but the secret necessarily traverses the hosted
+application and relay before reaching the connector. Deployments whose policy
+prohibits this flow should disable bootstrap and require users to register the
+connector's public key through the institution's account portal. Removing
+password-bearing relay commands in favor of portal-based enrollment or a
+dedicated secret-exchange design is part of production hardening.
+
 Two complementary environment strategies support portability. ICESEE-Spack
 uses Spack [@gamblin2015spack] to resolve source builds against site-specific
 compilers, MPI implementations, and system libraries. This is useful on HPC
@@ -157,13 +226,15 @@ A typical remote experiment proceeds as follows:
 
 1. The user selects CryoLauncher or ICESEE and edits a configuration in the
    browser.
-2. CryoStack validates and snapshots the configuration and associates it with
-   an experiment record.
-3. The execution layer stages inputs and either runs locally or submits the job
-   to a remote Slurm backend using a Spack or container environment.
-4. Job state and logs are returned to the application while scheduler and path
-   metadata are recorded in the workspace.
-5. The user inspects or downloads outputs and can reuse the saved configuration
+2. CryoStack validates and snapshots the configuration, associates it with an
+   experiment record, and creates or reuses a connector session.
+3. The FastAPI relay correlates an application command with the outbound
+   connector WebSocket.
+4. The connector stages inputs over rsync and submits the job to Slurm using a
+   Spack or container environment.
+5. Scheduler state, logs, and output metadata return through the connector and
+   relay and are recorded in the workspace.
+6. The user inspects or downloads outputs and can reuse the saved configuration
    for a subsequent experiment.
 
 # Research and Educational Use
@@ -197,10 +268,16 @@ suitable for browser-host execution. Remote use still requires an authorized
 account, network access such as a VPN where applicable, and a compatible
 software environment on the target system. At present, backend and
 application adapters contain platform-specific configuration that should be
-generalized before broad multi-institutional deployment. Planned work includes
-formal release archives, expanded automated testing across backends, richer
-machine-readable provenance, additional community applications, and clearer
-administrator interfaces for registering resources.
+generalized before broad multi-institutional deployment. The present relay
+keeps sessions and pending commands in a single process, so service restarts
+discard that state and horizontal scaling requires a shared session store.
+Production hardening must also bind connector sessions to authenticated users,
+replace generic shell execution with an explicit command allowlist, validate
+remote paths and scheduler parameters, and add auditable per-command policy.
+Planned work additionally includes formal release archives, expanded automated
+testing across backends, richer machine-readable provenance, additional
+community applications, and clearer administrator interfaces for registering
+resources.
 
 # Acknowledgements
 

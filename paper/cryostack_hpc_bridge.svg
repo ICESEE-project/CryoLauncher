@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc" font-family="Verdana">
+  <title id="title">CryoStack HPC connector and relay architecture</title>
+  <desc id="desc">ICESEE and CryoLauncher use HTTPS to send session-scoped commands to a FastAPI relay. A connector on the user's workstation opens an outbound secure WebSocket and performs SSH, rsync, and Slurm operations on the HPC system.</desc>
+  <defs>
+    <style>
+      text { font-family: "DejaVu Sans", Arial, sans-serif; }
+      .title { font-size: 29px; font-weight: 700; fill: #153445; }
+      .zone { font-size: 18px; font-weight: 700; fill: #36576a; letter-spacing: .7px; }
+      .box-title { font-size: 20px; font-weight: 700; fill: #153445; }
+      .body { font-size: 15px; fill: #36576a; }
+      .small { font-size: 13px; fill: #36576a; }
+      .step { font-size: 14px; font-weight: 700; fill: #ffffff; }
+      .blue { stroke: #367c9a; stroke-width: 3; fill: none; marker-end: url(#blue-arrow); }
+      .blue-bi { stroke: #367c9a; stroke-width: 3; fill: none; marker-start: url(#blue-arrow-start); marker-end: url(#blue-arrow); }
+      .green { stroke: #43825b; stroke-width: 3; fill: none; marker-end: url(#green-arrow); }
+      .green-bi { stroke: #43825b; stroke-width: 3; fill: none; marker-start: url(#green-arrow-start); marker-end: url(#green-arrow); }
+      .gray { stroke: #78909c; stroke-width: 2.5; fill: none; marker-end: url(#gray-arrow); }
+    </style>
+    <marker id="blue-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#367c9a"/></marker>
+    <marker id="blue-arrow-start" markerWidth="10" markerHeight="10" refX="1" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M9,0 L9,6 L0,3 z" fill="#367c9a"/></marker>
+    <marker id="green-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#43825b"/></marker>
+    <marker id="green-arrow-start" markerWidth="10" markerHeight="10" refX="1" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M9,0 L9,6 L0,3 z" fill="#43825b"/></marker>
+    <marker id="gray-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#78909c"/></marker>
+    <filter id="shadow" x="-12%" y="-16%" width="124%" height="132%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#153445" flood-opacity="0.13"/></filter>
+  </defs>
+
+  <rect width="1200" height="720" rx="18" fill="#f7fafb"/>
+  <text x="600" y="45" text-anchor="middle" class="title">CryoStack HPC Connector and Relay</text>
+
+  <rect x="28" y="75" width="250" height="570" rx="18" fill="#eef6f8" stroke="#91b8c5" stroke-width="2"/>
+  <text x="153" y="108" text-anchor="middle" class="zone">HOSTED APPLICATION</text>
+
+  <rect x="52" y="142" width="202" height="92" rx="13" fill="#ffffff" stroke="#6da3b5" stroke-width="2" filter="url(#shadow)"/>
+  <text x="153" y="177" text-anchor="middle" class="box-title">Web browser</text>
+  <text x="153" y="204" text-anchor="middle" class="body">Configure and monitor</text>
+
+  <rect x="52" y="292" width="202" height="146" rx="13" fill="#dceff2" stroke="#4d91a5" stroke-width="2" filter="url(#shadow)"/>
+  <text x="153" y="330" text-anchor="middle" class="box-title">Voilà application</text>
+  <text x="153" y="360" text-anchor="middle" class="body">ICESEE or</text>
+  <text x="153" y="384" text-anchor="middle" class="body">CryoLauncher</text>
+  <text x="153" y="414" text-anchor="middle" class="small">relay client · remote runner</text>
+  <path d="M153 234 L153 292" class="gray"/>
+  <circle cx="174" cy="261" r="13" fill="#78909c"/><text x="174" y="266" text-anchor="middle" class="step">1</text>
+
+  <rect x="318" y="75" width="264" height="570" rx="18" fill="#eef3f7" stroke="#91a9b7" stroke-width="2"/>
+  <text x="450" y="108" text-anchor="middle" class="zone">CRYOSTACK SERVICES</text>
+
+  <rect x="342" y="142" width="216" height="92" rx="13" fill="#ffffff" stroke="#7897a8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="450" y="177" text-anchor="middle" class="box-title">Nginx</text>
+  <text x="450" y="204" text-anchor="middle" class="body">HTTP/WebSocket proxy</text>
+
+  <rect x="342" y="292" width="216" height="180" rx="13" fill="#dce8ef" stroke="#5e8295" stroke-width="2" filter="url(#shadow)"/>
+  <text x="450" y="330" text-anchor="middle" class="box-title">FastAPI relay</text>
+  <text x="450" y="360" text-anchor="middle" class="body">session registry</text>
+  <text x="450" y="385" text-anchor="middle" class="body">command IDs</text>
+  <text x="450" y="410" text-anchor="middle" class="body">pending futures</text>
+  <text x="450" y="442" text-anchor="middle" class="small">Uvicorn · internal port 8899</text>
+  <path d="M450 234 L450 292" class="gray"/>
+
+  <path d="M254 350 L342 350" class="blue-bi"/>
+  <circle cx="298" cy="328" r="13" fill="#367c9a"/><text x="298" y="333" text-anchor="middle" class="step">2</text>
+  <text x="298" y="385" text-anchor="middle" class="small">HTTPS session +</text>
+  <text x="298" y="404" text-anchor="middle" class="small">command/result</text>
+
+  <rect x="622" y="75" width="260" height="570" rx="18" fill="#f1f6f1" stroke="#94b19d" stroke-width="2"/>
+  <text x="752" y="108" text-anchor="middle" class="zone">USER WORKSTATION</text>
+
+  <rect x="646" y="180" width="212" height="176" rx="13" fill="#e0f0e5" stroke="#57916c" stroke-width="2" filter="url(#shadow)"/>
+  <text x="752" y="218" text-anchor="middle" class="box-title">Connector</text>
+  <text x="752" y="248" text-anchor="middle" class="body">outbound WSS client</text>
+  <text x="752" y="273" text-anchor="middle" class="body">typed command dispatch</text>
+  <text x="752" y="298" text-anchor="middle" class="body">SSH · rsync · archives</text>
+  <text x="752" y="330" text-anchor="middle" class="small">macOS/Linux/Windows package</text>
+
+  <rect x="646" y="422" width="212" height="112" rx="13" fill="#ffffff" stroke="#78a087" stroke-width="2" filter="url(#shadow)"/>
+  <text x="752" y="459" text-anchor="middle" class="box-title">Local access</text>
+  <text x="752" y="489" text-anchor="middle" class="body">SSH keys · VPN</text>
+  <text x="752" y="514" text-anchor="middle" class="small">institutional authentication</text>
+  <path d="M752 356 L752 422" class="gray"/>
+
+  <path d="M558 256 C590 222 614 222 646 256" class="blue-bi"/>
+  <circle cx="602" cy="220" r="13" fill="#367c9a"/><text x="602" y="225" text-anchor="middle" class="step">3</text>
+  <text x="602" y="282" text-anchor="middle" class="small">outbound WSS</text>
+  <circle cx="778" cy="389" r="13" fill="#78909c"/><text x="778" y="394" text-anchor="middle" class="step">4</text>
+  <text x="827" y="394" text-anchor="middle" class="small">local tools</text>
+
+  <rect x="922" y="75" width="250" height="570" rx="18" fill="#f7f4ea" stroke="#b8a873" stroke-width="2"/>
+  <text x="1047" y="108" text-anchor="middle" class="zone">HPC RESOURCE</text>
+
+  <rect x="946" y="164" width="202" height="112" rx="13" fill="#fff8e5" stroke="#c49a36" stroke-width="2" filter="url(#shadow)"/>
+  <text x="1047" y="202" text-anchor="middle" class="box-title">Login node</text>
+  <text x="1047" y="232" text-anchor="middle" class="body">SSH endpoint</text>
+  <text x="1047" y="256" text-anchor="middle" class="small">run directory · inputs · logs</text>
+
+  <rect x="946" y="330" width="202" height="112" rx="13" fill="#fff8e5" stroke="#c49a36" stroke-width="2" filter="url(#shadow)"/>
+  <text x="1047" y="368" text-anchor="middle" class="box-title">Slurm</text>
+  <text x="1047" y="398" text-anchor="middle" class="body">sbatch · squeue · sacct</text>
+  <text x="1047" y="422" text-anchor="middle" class="small">scancel · scheduler metadata</text>
+
+  <rect x="946" y="496" width="202" height="112" rx="13" fill="#fff8e5" stroke="#c49a36" stroke-width="2" filter="url(#shadow)"/>
+  <text x="1047" y="534" text-anchor="middle" class="box-title">Compute + storage</text>
+  <text x="1047" y="564" text-anchor="middle" class="body">MPI model/ensemble</text>
+  <text x="1047" y="588" text-anchor="middle" class="small">Spack or Apptainer runtime</text>
+
+  <path d="M858 248 L946 220" class="green-bi"/>
+  <circle cx="902" cy="211" r="13" fill="#43825b"/><text x="902" y="216" text-anchor="middle" class="step">5</text>
+  <text x="902" y="273" text-anchor="middle" class="small">SSH / rsync</text>
+  <path d="M1047 276 L1047 330" class="green"/>
+  <circle cx="1069" cy="303" r="13" fill="#43825b"/><text x="1069" y="308" text-anchor="middle" class="step">6</text>
+  <path d="M1047 442 L1047 496" class="green"/>
+
+  <rect x="318" y="668" width="564" height="34" rx="10" fill="#e5eef2" stroke="#78909c" stroke-width="1.5"/>
+  <text x="600" y="691" text-anchor="middle" class="small">No inbound connection from CryoStack to the workstation or HPC network</text>
+</svg>
