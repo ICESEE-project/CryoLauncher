@@ -28,6 +28,31 @@ RUN set -eu \
     && /opt/venv-icepack/bin/pip install --no-cache-dir --no-deps bigmpi4py \
     && /opt/venv-firedrake/bin/pip install --no-cache-dir --no-deps bigmpi4py
 
+# ── AWS CLI v2 (build-time, baked into the image) ────────────────
+# CryoStack's cloud runner (cryostack_src/cloud/runtime.py) shells out to
+# `aws s3 sync` to fetch a run's staged inputs and publish its outputs --
+# it needs this binary present in the running Fargate container, not
+# something a job installs for itself at start (the exact live failure this
+# fixes: "the batch container has no 'aws' CLI (needed for S3 I/O)").
+#
+# Ubuntu 24.04 (this image's base) carries no `awscli` apt package at all
+# (dropped from the archive) -- installed instead via AWS's own official
+# installer, using `curl`/`unzip`, BOTH of which this base image already
+# ships (verified: no new base dependency introduced by this). The version
+# is pinned for a reproducible, tested image; bump the number here (and the
+# TESTED_IMAGES digest in cryostack_src/models/stack/images.py once the
+# rebuilt image is pushed) to pick up a newer AWS CLI release.
+RUN set -eu \
+    && AWSCLI_VERSION=2.36.40 \
+    && cd /tmp \
+    && curl -fsSL \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSCLI_VERSION}.zip" \
+        -o awscliv2.zip \
+    && unzip -q awscliv2.zip \
+    && ./aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws \
+    && aws --version
+
 # ── Cache directory helper ────────────────────────────────────
 RUN printf '%s\n' \
     '#!/bin/sh' \
