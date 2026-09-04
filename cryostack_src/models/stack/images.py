@@ -45,7 +45,30 @@ class TestedImage:
 
 
 # ── the registry ────────────────────────────────────────────────────────────
+# Insertion order matters: default_tested_image_for_model() returns the FIRST
+# entry that supports a model, so the current default goes first. Superseded
+# entries are kept, never deleted or overwritten -- an already-mirrored ECR
+# image (or a run's recorded provenance) must always resolve back to a real,
+# unmodified registry fact, even after a newer tested image is added.
 TESTED_IMAGES: dict[str, TestedImage] = {
+    "icesee-combined-v1.0.1": TestedImage(
+        key="icesee-combined-v1.0.1",
+        label="ICESEE Combined v1.0.1",
+        reference="bkyanjo/icesee-combined:v1.0.1",
+        digest="sha256:e393b1eed21f3481fffcfb3bb7ce5ce315fbff0cc8dc0fe4f2bcc2e2f1d538ed",
+        models=("issm", "icepack"),
+        components={
+            # unchanged from v1.0.0 -- this release ONLY adds the AWS CLI
+            # (cloud S3 input/output sync); no scientific-stack layer was
+            # rebuilt (confirmed: the pip/ICESEE dependency layer built
+            # byte-identical / cache-hit against v1.0.0's own build).
+            "issm": {
+                "version": "2026.1 (self-reported)",
+                "commit": "e70338d8685f8582b61958211e8f5fce2ea686ff",
+            },
+            "firedrake": {"version": "2025.10.2"},
+        },
+    ),
     "icesee-combined-v1.0.0": TestedImage(
         key="icesee-combined-v1.0.0",
         label="ICESEE Combined v1.0.0",
