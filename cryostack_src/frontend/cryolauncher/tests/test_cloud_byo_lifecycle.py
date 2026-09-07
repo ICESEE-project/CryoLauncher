@@ -442,3 +442,100 @@ def test_switching_accounts_does_not_disturb_an_unrelated_attached_run():
     asyncio.run(ctl._terminate_worker("job-B1"))
     assert ctl.state == CANCELLED
     assert RecordingBridge.instances
+
+
+# -- F. AWS diagnostics snapshot: seeded at submit, grown by each poll ----
+class _StatusMeta:
+    def __init__(self, state, metadata=None):
+        self.state = state
+        self.raw_state = state.upper()
+        self.reason = ""
+        self.metadata = metadata or {}
+
+
+class _DiagBridge:
+    """status() reveals more resource identity on each successive poll, like
+    a real DescribeJobs (image at RUNNABLE, log stream + task ARN once the
+    Fargate task starts)."""
+
+    _i = 0
+
+    def __init__(self, **kw):
+        pass
+
+    def submit(self, **kw):
+        class _R:
+            job_id = "job-D1"
+            working_directory = None
+            metadata = {"s3_run": "s3://cryostack-runs-774888247882/runs/u/x",
+                        "run_id": "x", "job_queue": "cryostack-queue",
+                        "job_definition": "cryostack-icepack:3"}
+            messages = []
+        return _R()
+
+    def status(self, *, job_id):
+        _DiagBridge._i += 1
+        if _DiagBridge._i == 1:
+            return _StatusMeta(RUNNING, {"region": "us-east-2",
+                                         "image": "acct.dkr.ecr.us-east-2.amazonaws.com/cryostack-icepack@sha256:abc"})
+        if _DiagBridge._i == 2:
+            return _StatusMeta(RUNNING, {
+                "region": "us-east-2",
+                "log_stream": "cryostack-icepack/default/abcdef",
+                "task_arn": "arn:aws:ecs:us-east-2:774888247882:task/AWSBatch-ce/deadbeef",
+            })
+        return _StatusMeta(COMPLETED, {"region": "us-east-2"})
+
+    def terminate(self, *, job_id):
+        return {"ok": True}
+
+
+def test_diagnostics_snapshot_is_seeded_at_submit_and_grows_each_poll():
+    _DiagBridge._i = 0
+    emitted: list = []
+    ctl, sink = _controller(
+        execution_provider=_byo_execution("774888247882"),
+        bridge_factory=lambda **kw: _DiagBridge(**kw),
+        on_resources=lambda job_id, res: emitted.append((job_id, dict(res))),
+    )
+    ctl.submit(
+        staged_source="/tmp/x", model="icepack", run_target="run.py",
+        bucket="cryostack-runs-774888247882", _account_id="774888247882",
+        _image_reference="bkyanjo/icesee-combined:v1.0.1",
+        _image_digest="sha256:" + "e" * 64,
+    )
+
+    snap = ctl._handle.aws_resources
+    # seeded at submit -- no poll needed
+    assert snap["batch_job_id"] == "job-D1"
+    assert snap["region"] == "us-east-2"
+    assert snap["s3_run"].startswith("s3://cryostack-runs-774888247882/")
+    assert snap["job_queue"] == "cryostack-queue"
+    assert snap["job_definition"] == "cryostack-icepack:3"
+    assert snap["image_reference"] == "bkyanjo/icesee-combined:v1.0.1"
+    # grown by polling
+    assert snap["log_stream"] == "cryostack-icepack/default/abcdef"
+    assert snap["task_arn"].endswith("deadbeef")
+    assert "dkr.ecr" in snap["image"]
+    # on_resources fired incrementally, always with (job_id, dict), monotonic
+    assert emitted and all(j == "job-D1" for j, _ in emitted)
+    assert len(emitted[-1][1]) >= len(emitted[0][1])
+    # never a credential in what was emitted
+    blob = str(emitted)
+    for banned in ("AWS_SECRET", "SESSION_TOKEN", "ASIA", "ExternalId"):
+        assert banned not in blob
+
+
+def test_diagnostics_are_restored_on_attach_from_the_persisted_snapshot():
+    ctl, sink = _controller(execution_provider=_byo_execution("774888247882"))
+    persisted = {
+        "region": "eu-west-1", "batch_job_id": "hist-1",
+        "s3_run": "s3://old-bucket/runs/u/r", "job_queue": "old-queue",
+    }
+    ctl.attach(job_id="hist-1", s3_run="s3://old-bucket/runs/u/r", model="icepack",
+               region="eu-west-1", account_id="774888247882",
+               aws_resources=persisted, state=COMPLETED)
+    from cryostack_src.cloud.diagnostics import aws_console_links
+
+    urls = " ".join(x["url"] for x in aws_console_links(ctl._handle.aws_resources))
+    assert "eu-west-1" in urls and "hist-1" in urls

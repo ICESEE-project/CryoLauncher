@@ -250,6 +250,11 @@ class _RunHandle:
     image_label: str = ""
     image_reference: str = ""
     image_digest: str = ""
+    #: non-secret AWS resource identity for the diagnostics menu -- SEEDED at
+    #: submit (job id, region, queue, job definition, s3 run, image) and grown
+    #: by each DescribeJobs poll (log stream, ECS task ARN, resolved ARNs).
+    #: Never a credential / token / ExternalId (merge_aws_resources enforces).
+    aws_resources: dict = field(default_factory=dict)
     #: monotonic seconds when the run left STAGING (set by the ticker owner)
     started_at: float = 0.0
 
@@ -268,6 +273,7 @@ class CloudRunController:
         on_results_ready: Callable[[], None] = lambda: None,
         execution_provider: Callable[[], Any] | None = None,
         on_run_view: Callable[..., None] | None = None,
+        on_resources: Callable[[str, dict], None] | None = None,
         poll_interval: float = 15.0,
         to_thread: Callable[..., Any] = asyncio.to_thread,
         sleep: Callable[[float], Any] = asyncio.sleep,
@@ -278,6 +284,11 @@ class CloudRunController:
         self._on_state = on_state
         self._on_log = on_log
         self._on_results_ready = on_results_ready
+        #: (job_id, aws_resources) -> None. Fired whenever the non-secret
+        #: resource snapshot grows -- the gateway persists it into the run
+        #: manifest so the diagnostics menu survives a page refresh and a
+        #: historical run keeps its OWN resources.
+        self._on_resources = on_resources
         #: () -> CloudExecution. When set, EVERY AWS operation for this run
         #: (stage, submit, poll, logs, terminate, result sync) is performed
         #: with a FRESH context from this -- a fresh sts:AssumeRole for a
@@ -322,10 +333,43 @@ class CloudRunController:
                 cost_public=dict(h.cost_public), job_id=h.job_id,
                 image_label=h.image_label, image_reference=h.image_reference,
                 image_digest=h.image_digest,
+                aws_resources=dict(h.aws_resources),
                 terminal=is_terminal(h.state),
             )
         except Exception:
             pass
+
+    def _seed_resources(self) -> None:
+        """The resource identity already known once a job id exists -- no AWS
+        call, all from the handle."""
+        h = self._handle
+        self._merge_resources({
+            "region": h.region,
+            "account_id": h.account_id,
+            "batch_job_id": h.job_id,
+            "s3_run": h.s3_run,
+            "image_reference": h.image_reference,
+            "image_digest": h.image_digest,
+            **({k: v for k, v in (h.metadata or {}).items()
+                if k in ("job_queue", "job_definition")}),
+        })
+
+    def _merge_resources(self, updates: dict) -> None:
+        """Fold non-secret resource identity into the snapshot; emit if it
+        grew. Never makes an AWS call -- callers pass what a poll already
+        returned."""
+        from cryostack_src.cloud.diagnostics import merge_aws_resources
+
+        before = self._handle.aws_resources
+        after = merge_aws_resources(before, updates)
+        if after == before:
+            return
+        self._handle.aws_resources = after
+        if self._on_resources is not None and self._handle.job_id:
+            try:
+                self._on_resources(self._handle.job_id, dict(after))
+            except Exception:
+                pass
 
     def _log(self, message: str) -> None:
         try:
@@ -484,6 +528,13 @@ class CloudRunController:
             self._handle.job_id = str(job_id)
             self._handle.s3_run = str(s3_run)
             self._handle.run_id = str(run_id or job_id)
+            # fold the submit-result's own non-secret job facts into the
+            # diagnostics snapshot (job queue / job definition it resolved)
+            self._merge_resources({
+                "job_queue": meta.get("job_queue"),
+                "job_definition": meta.get("job_definition"),
+            })
+            self._seed_resources()
             self._log(f"[cloud] Submitted. job id {job_id}")
             try:
                 self._register_run(handle=self._handle, result=result)
@@ -543,6 +594,18 @@ class CloudRunController:
                 self._log(f"[cloud] status check failed, retrying: {poll_err}")
                 await self._sleep(self._poll_interval)
                 continue
+
+            # grow the diagnostics snapshot from what THIS poll revealed
+            # (log stream, ECS task ARN, resolved queue / job-definition
+            # ARNs, container image) -- no extra AWS call, all from the
+            # DescribeJobs result we already have.
+            try:
+                from cryostack_src.cloud.diagnostics import resources_from_poll
+
+                self._merge_resources(
+                    resources_from_poll(getattr(status, "metadata", {}) or {}))
+            except Exception:
+                pass
 
             if state and state != self._handle.state:
                 self._set_state(state)
@@ -622,14 +685,18 @@ class CloudRunController:
                expected_runtime_minutes: float = 0.0, cost_public: dict | None = None,
                image_key: str = "", image_label: str = "",
                image_reference: str = "", image_digest: str = "",
+               aws_resources: dict | None = None,
                state: str = QUEUED) -> None:
         """Re-attach to a run that already exists (e.g. selected from run
         history after a kernel restart) and resume polling if it is not
         terminal. Status/log/terminate/retrieve then use a FRESH context for
         the recorded ``account_id`` (BYO) -- no persisted STS credentials.
 
-        ``image_*`` come from the run manifest so the CLOUD RUN card shows
-        the image THIS run used, not whatever the current default is."""
+        ``image_*`` and ``aws_resources`` come from the run manifest so the
+        CLOUD RUN card + diagnostics menu reflect THIS run, not the current
+        Cloud Environment defaults."""
+        from cryostack_src.cloud.diagnostics import merge_aws_resources
+
         self._handle = _RunHandle(
             job_id=str(job_id), s3_run=str(s3_run), model=model,
             region=region, profile=profile, state=state,
@@ -641,7 +708,10 @@ class CloudRunController:
             image_label=(image_label or "").strip(),
             image_reference=(image_reference or "").strip(),
             image_digest=(image_digest or "").strip(),
+            aws_resources=merge_aws_resources({}, aws_resources or {}),
         )
+        # backfill anything the persisted snapshot did not have (older runs)
+        self._seed_resources()
         self._set_state(state)
         if not is_terminal(state):
             self.start_polling(str(job_id))

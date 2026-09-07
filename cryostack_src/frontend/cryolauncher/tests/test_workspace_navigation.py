@@ -217,3 +217,29 @@ def _iter(w):
     yield w
     for c in getattr(w, "children", ()):
         yield from _iter(c)
+
+
+def test_history_card_shows_aws_diagnostics_from_the_run_s_own_persisted_resources():
+    """A historical cloud run's AWS diagnostics menu is built from ITS OWN
+    metadata['aws_resources'] -- never the current Cloud Environment defaults,
+    and never an AWS call."""
+    run = _Run("cloud-1", model="icepack")
+    run.backend, run.execution_mode = "aws", "cloud"
+    run.metadata = {"aws_resources": {
+        "region": "eu-west-1",                      # a DIFFERENT region than any default
+        "batch_job_id": "old-job-xyz",
+        "s3_run": "s3://old-bucket/runs/bob/r0",
+        "job_queue": "cryostack-queue",
+    }}
+    mgr = _FakeManager([run])
+    panel = build_workspace_history_panel(manager=mgr, defer_initial_load=False)
+    panel.runs.value = "cloud-1"
+
+    selected = next(w for w in _iter(panel.runs_panel)
+                    if isinstance(w, W.HTML) and "Selected Run" not in w.value
+                    and "cryostack-selected-run-card" in w.value)
+    html = selected.value
+    assert "AWS diagnostics" in html
+    assert "eu-west-1" in html and "old-job-xyz" in html
+    assert "us-east-2" not in html                  # no leakage of a current default
+    assert "Backend</span><b>AWS Batch (Fargate)" in html

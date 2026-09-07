@@ -231,6 +231,33 @@ class WorkspaceManager:
         run = next((item for item in self._runs.values() if str(item.jobid) == str(job_id)), None)
         return self.update_run_status(run.id, state) if run else None
 
+    def merge_run_metadata_by_job(self, job_id: str, patch: dict) -> RunInfo | None:
+        """Shallow-merge ``patch`` into a run's ``metadata`` and persist the
+        manifest. One level deep: a dict value is itself merged (used for the
+        incrementally-grown ``aws_resources`` snapshot), a scalar replaces.
+        Never touches run status. The caller is responsible for ``patch``
+        carrying only non-secret data."""
+        run = next((r for r in self._runs.values() if str(r.jobid) == str(job_id)), None)
+        if not run or not isinstance(patch, dict) or not patch:
+            return run
+        changed = False
+        md = dict(run.metadata or {})
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(md.get(key), dict):
+                merged = {**md[key], **value}
+                if merged != md[key]:
+                    md[key] = merged
+                    changed = True
+            elif md.get(key) != value:
+                md[key] = value
+                changed = True
+        if changed:
+            run.metadata = md
+            if run.workspace_directory:
+                write_manifest(run, run.workspace_directory)
+            self.invalidate_result_package_cache(run.id)
+        return run
+
     def tail(self, run_id: str):
         run = self.select_run(run_id)
         if not run:

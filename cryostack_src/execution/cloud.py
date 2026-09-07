@@ -260,6 +260,9 @@ class CloudBackend(
                         "log_stream"
                     )
                 ),
+                "log_group": result.get("log_group"),
+                "image": result.get("image"),
+                "task_arn": result.get("task_arn"),
                 "created_at": (
                     result.get(
                         "created_at"

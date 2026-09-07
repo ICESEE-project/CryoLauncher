@@ -102,6 +102,7 @@ def build_active_run_callbacks(
             image_reference=v.get("image_reference", ""),
             image_digest=v.get("image_digest", ""),
             image_label=v.get("image_label", ""),
+            aws_resources=v.get("aws_resources") or {},
         )
 
     async def _tick_loop(gen: int) -> None:

@@ -855,6 +855,9 @@ def build_icesheets_ui():
                     "image_label": getattr(handle, "image_label", "") or "",
                     "image_reference": getattr(handle, "image_reference", "") or "",
                     "image_digest": getattr(handle, "image_digest", "") or "",
+                    # non-secret AWS resource identity -- seeded now, grown by
+                    # each DescribeJobs poll (see _persist_cloud_resources)
+                    "aws_resources": dict(getattr(handle, "aws_resources", {}) or {}),
                 },
                 container=_container,
                 software=_software,
@@ -2920,6 +2923,19 @@ def build_icesheets_ui():
                       "rendered in Results. Use Download Results / Download "
                       "Figures to export.")
 
+        def _persist_cloud_resources(job_id, resources):
+            """Non-blocking, no-AWS: fold the controller's grown resource
+            snapshot into the run manifest so the AWS diagnostics menu
+            survives a page refresh and a historical run keeps its OWN
+            resources. Only non-secret identity (the controller already
+            enforces this via merge_aws_resources)."""
+            try:
+                workspace_manager.merge_run_metadata_by_job(
+                    str(job_id), {"aws_resources": dict(resources or {})})
+            except Exception as _pe:  # noqa: BLE001 - never break a poll
+                with log_out:
+                    print("[cloud][diagnostics] (non-fatal)", type(_pe).__name__, _pe)
+
         _cloud["controller"] = CloudRunController(
             bridge_factory=current_cloud_bridge,
             register_run=_register_cloud_run,
@@ -2931,6 +2947,7 @@ def build_icesheets_ui():
             # for the reviewed account -- no ambient/profile fallback.
             execution_provider=_resolve_cloud_execution,
             on_run_view=lambda **v: _active_run_holder["render"](**v),
+            on_resources=_persist_cloud_resources,
             poll_interval=float(os.environ.get("CRYOSTACK_CLOUD_POLL_SECONDS", "20")),
         )
 
@@ -3698,6 +3715,7 @@ def build_icesheets_ui():
                     image_reference=(meta.get("image_reference")
                                      or (_rc.get("reference") or "").replace("docker://", "")),
                     image_digest=meta.get("image_digest") or _rc.get("digest") or "",
+                    aws_resources=meta.get("aws_resources") or {},
                     state={"submitted": "queued"}.get(run.status, run.status),
                 )
 

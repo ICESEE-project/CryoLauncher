@@ -247,6 +247,15 @@ def batch_status(
         "log_stream": container.get(
             "logStreamName"
         ),
+        # non-secret resource identity revealed incrementally by DescribeJobs
+        # (used to build the AWS diagnostics menu -- never a credential)
+        "log_group": (
+            (container.get("logConfiguration") or {})
+            .get("options", {})
+            .get("awslogs-group")
+        ),
+        "image": container.get("image"),
+        "task_arn": container.get("taskArn"),
         "created_at": job.get(
             "createdAt"
         ),

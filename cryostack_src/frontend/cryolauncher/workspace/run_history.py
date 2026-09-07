@@ -45,6 +45,26 @@ def build_workspace_history_panel(
         value = str(status or "unknown").lower()
         return f"<span class='cryostack-run-badge cryostack-run-badge-{value}'>{value.title()}</span>"
 
+    def _aws_diagnostics_html(run) -> str:
+        """AWS console links for a cloud run, built PURELY from THIS run's
+        persisted metadata['aws_resources'] -- never the current Cloud
+        Environment defaults, and never an AWS call."""
+        resources = (getattr(run, "metadata", None) or {}).get("aws_resources") or {}
+        if not resources:
+            return ""
+        try:
+            from cryostack_src.frontend.cryolauncher.cloud_environment import (
+                aws_diagnostics_html,
+            )
+            snippet = aws_diagnostics_html(resources)
+        except Exception:  # noqa: BLE001 - a link menu must never break the card
+            return ""
+        if not snippet:
+            return ""
+        return ("<div class='cryostack-section-label cryostack-selected-label'>"
+                "AWS diagnostics</div>"
+                "<div class='cryostack-selected-run-card'>" + snippet + "</div>")
+
     def software_stack_html(run) -> str:
         container = getattr(run, "container", None) or {}
         software = getattr(run, "software", None) or {}
@@ -159,6 +179,7 @@ def build_workspace_history_panel(
             f"<div><span>Status</span>{status_badge(run.status)}</div>"
             "</div>"
             + software_stack_html(run)
+            + _aws_diagnostics_html(run)
         )
         paths = manager.files(run.id)
         labels = [str(path.relative_to(run.workspace_directory)) for path in paths]

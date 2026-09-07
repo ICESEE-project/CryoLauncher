@@ -141,6 +141,7 @@ class CloudEnvironmentWidgets:
     active_run_title: W.HTML
     active_run_status: W.HTML
     active_run_detail: W.HTML
+    active_run_diagnostics: W.HTML
     active_run_actions: W.HBox
     active_run_log_button: W.Button
     active_run_results_button: W.Button
@@ -733,6 +734,7 @@ def _build_active_run_section() -> dict:
     title = W.HTML()
     status = W.HTML()
     detail = W.HTML()
+    diagnostics = W.HTML()      # AWS diagnostics menu -- pure links, no AWS call
 
     log_button = secondary_button("View log", icon="file-text")
     results_button = primary_button("View results", icon="chart-area")
@@ -746,7 +748,7 @@ def _build_active_run_section() -> dict:
         [
             W.HTML("<div style='font-size:12px;font-weight:700;color:#172033;"
                    "letter-spacing:.02em;'>CLOUD RUN</div>"),
-            title, status, detail, actions,
+            title, status, detail, diagnostics, actions,
         ],
         layout=W.Layout(
             width="100%", gap="5px", padding="12px",
@@ -759,6 +761,7 @@ def _build_active_run_section() -> dict:
         "active_run_title": title,
         "active_run_status": status,
         "active_run_detail": detail,
+        "active_run_diagnostics": diagnostics,
         "active_run_actions": actions,
         "active_run_log_button": log_button,
         "active_run_results_button": results_button,
@@ -768,6 +771,29 @@ def _build_active_run_section() -> dict:
 
 def show_active_run(widgets: "CloudEnvironmentWidgets", visible: bool) -> None:
     widgets.active_run_section.layout.display = "flex" if visible else "none"
+
+
+def aws_diagnostics_html(resources: dict | None) -> str:
+    """The AWS diagnostics menu as an HTML snippet -- a labelled row of
+    external links built PURELY from a run's persisted resource snapshot
+    (:func:`cryostack_src.cloud.diagnostics.aws_console_links`). No AWS call.
+    Empty string when nothing can be linked yet."""
+    from cryostack_src.cloud.diagnostics import aws_console_links
+
+    links = aws_console_links(resources)
+    if not links:
+        return ""
+    items = " &nbsp;·&nbsp; ".join(
+        f"<a href='{escape_text(x['url'])}' target='_blank' "
+        f"rel='noopener noreferrer' title='{escape_text(x.get('detail') or '')}'>"
+        f"{escape_text(x['label'])}</a>"
+        for x in links
+    )
+    return (
+        "<div style='font-size:10.5px;color:#66758d;margin-top:2px;'>"
+        "<span style='color:#8a94a6;font-weight:600;'>AWS diagnostics</span> "
+        "&nbsp; " + items + "</div>"
+    )
 
 
 def set_active_run_view(
@@ -785,9 +811,11 @@ def set_active_run_view(
     image_reference: str = "",
     image_digest: str = "",
     image_label: str = "",
+    aws_resources: dict | None = None,
 ) -> None:
     """Render the CLOUD RUN card. ``cost_text`` is a pre-formatted string
-    ("<$0.01" / "$0.04" / "Unavailable") -- this function never prices."""
+    ("<$0.01" / "$0.04" / "Unavailable") -- this function never prices, and
+    the diagnostics menu it renders makes no AWS call."""
     badge_state, label = _RUN_STATE_LABELS.get(state, ("running", state or "…"))
     terminal = state in ("completed", "failed", "cancelled")
     running = state in ("staging", "submitting", "queued", "running")
@@ -836,6 +864,7 @@ def set_active_run_view(
     widgets.active_run_detail.value = (
         f"<table style='font-size:11px;border-collapse:collapse;'>{body}</table>{note}"
     )
+    widgets.active_run_diagnostics.value = aws_diagnostics_html(aws_resources)
 
     widgets.active_run_terminate_button.layout.display = (
         "none" if terminal else "inline-flex"
@@ -1188,6 +1217,7 @@ def build_cloud_environment_card(
         active_run_title=active_run["active_run_title"],
         active_run_status=active_run["active_run_status"],
         active_run_detail=active_run["active_run_detail"],
+        active_run_diagnostics=active_run["active_run_diagnostics"],
         active_run_actions=active_run["active_run_actions"],
         active_run_log_button=active_run["active_run_log_button"],
         active_run_results_button=active_run["active_run_results_button"],
