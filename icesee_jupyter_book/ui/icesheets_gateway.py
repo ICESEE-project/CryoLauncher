@@ -1860,6 +1860,40 @@ def build_icesheets_ui():
             if selected:
                 selected_line = f"<div><span class='icesee-summary-k'>Selected example:</span> {selected}</div>"
 
+            def _cloud_source_lines() -> str:
+                """Truthful 'what runs' lines for the cloud Run Plan: the
+                canonical example SOURCE vs. the executable ARTIFACT.
+
+                A converted Icepack notebook shows the notebook as the source
+                and run.py as the run target -- AWS Batch never executes the
+                .ipynb (it is nbconvert'd to run.py before staging). ISSM and
+                ordinary script examples stay truthful to their own
+                source == run-target relationship.
+                """
+                _p = Path(selected or "")
+                _name = _p.stem or _p.name or "example"
+                _rt = (run_target.value or "").strip()
+                rows = [f"<div><span class='icesee-summary-k'>Example:</span> "
+                        f"{html.escape(_name)}</div>"]
+                _suffix = _p.suffix.lower()
+                if _suffix == ".ipynb":
+                    _rt = _rt or "run.py"
+                    rows.append(
+                        "<div><span class='icesee-summary-k'>Source:</span> "
+                        f"<code>{html.escape(_p.name)}</code> "
+                        "<span class='icesee-subtle'>(converted to "
+                        "<code>run.py</code> before staging)</span></div>")
+                elif _suffix:
+                    rows.append(
+                        "<div><span class='icesee-summary-k'>Source:</span> "
+                        f"<code>{html.escape(_p.name)}</code></div>")
+                if _rt:
+                    rows.append(
+                        "<div><span class='icesee-summary-k'>Run target:</span> "
+                        f"<code>{html.escape(_rt)}</code> "
+                        "<span class='icesee-subtle'>(executed on AWS Batch)</span></div>")
+                return "\n".join(rows)
+
             # Cloud is its own execution mode: the compute substrate is AWS
             # Batch/Fargate and the scientific stack is ALWAYS the tested
             # container image (whose environment is Spack-built) -- backend_dd
@@ -1885,7 +1919,7 @@ def build_icesheets_ui():
                   <div><span class="icesee-summary-k">Model environment:</span> ICESEE-Container (Spack-built stack)</div>
                   <div><span class="icesee-summary-k">Model:</span> {model.upper()}</div>
                   {_img_line}
-                  {selected_line}
+                  {_cloud_source_lines()}
                   <div><span class="icesee-summary-k">Execution:</span> Runs the tested combined image on AWS Batch/Fargate; run inputs and outputs sync via S3.</div>
                 </div>
                 """
@@ -1984,6 +2018,14 @@ def build_icesheets_ui():
         model_dd.observe(_summary, names="value")
         model_dd.observe(lambda _c: software_panel.set_model(model_dd.value), names="value")
         model_dd.observe(lambda _c: image_panel.set_model(model_dd.value), names="value")
+        # the Basic-mode configuration accordion is model-specific
+        # (md_config_panel vs. icepack_config_panel -- each with its own
+        # "<MODEL> configuration (Basic)" title). update_visibility already
+        # toggles which one is shown from model_dd.value; it just was not
+        # re-run on a model switch, so the ISSM panel stayed visible with
+        # Icepack selected. Runs last so it also picks up any state the
+        # software/image panel observers above just changed.
+        model_dd.observe(update_visibility, names="value")
         software_panel.observe_profile(lambda profile: image_panel.set_profile(profile))
         image_panel.on_change(update_summary)
         mode_dd.observe(update_visibility, names="value")

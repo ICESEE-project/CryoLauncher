@@ -1048,9 +1048,10 @@ def build_cloud_environment_card(
     advanced_caption = W.HTML(
         value=(
             "<div style='font-size:11px;color:#96a1b4;line-height:1.45;'>"
-            "Developer / override settings. Not needed when an AWS account is "
-            "connected — CryoStack derives the bucket, queue and job "
-            "definition automatically."
+            "<b>Leave these fields blank</b> to use the CryoStack-prepared "
+            "resources for the connected AWS account (bucket, queue and job "
+            "definition are derived automatically). Set a field only to "
+            "override that specific resource."
             "</div>"
         ),
     )

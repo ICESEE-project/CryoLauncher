@@ -711,12 +711,18 @@ def _summary_internals(monkeypatch, tmp_path, *, user):
     _, update_visibility = _find_widget_by_observer(page, "update_visibility")
     update_summary = _freevar(update_visibility, "update_summary")
     return {
+        "page": page,
+        "update_visibility": update_visibility,
         "update_summary": update_summary,
         "summary_html": _freevar(update_summary, "summary_html"),
         "mode_dd": _freevar(update_summary, "mode_dd"),
         "model_dd": _freevar(update_summary, "model_dd"),
         "backend_dd": _freevar(update_summary, "backend_dd"),
         "command_preview": _freevar(update_summary, "command_preview"),
+        "run_target": _freevar(update_summary, "run_target"),
+        "STATUS": _freevar(update_summary, "STATUS"),
+        "md_config_panel": _freevar(update_visibility, "md_config_panel"),
+        "icepack_config_panel": _freevar(update_visibility, "icepack_config_panel"),
     }
 
 
@@ -824,3 +830,77 @@ def test_cloud_submit_freezes_the_container_image_into_run_provenance(monkeypatc
     assert started["software"]                      # per-component provenance present
     assert started["backend"] == "aws"
     assert started["execution_mode"] == "cloud"
+
+
+# ── UI-semantic cleanup: Basic-mode config title, cloud Run Plan source ──
+def test_basic_config_accordion_follows_the_selected_model(monkeypatch, tmp_path):
+    """Switching model must retitle the Basic-mode configuration accordion:
+    Icepack selected -> the Icepack panel is shown, the ISSM panel hidden
+    (and vice versa). Regression: update_visibility was not re-run on a
+    model switch, so 'ISSM configuration (Basic)' stayed visible for
+    Icepack."""
+    g = _summary_internals(monkeypatch, tmp_path, user="basic-title-user")
+    md, ip = g["md_config_panel"], g["icepack_config_panel"]
+
+    g["model_dd"].value = "icepack"
+    assert ip.layout.display == "" and md.layout.display == "none"
+    assert ip.get_title(0) == "⚙️ Icepack configuration (Basic)"
+
+    g["model_dd"].value = "issm"                      # ISSM behaviour preserved
+    assert md.layout.display == "" and ip.layout.display == "none"
+    assert md.get_title(0) == "⚙️ ISSM configuration (Basic)"
+
+
+def test_cloud_run_plan_distinguishes_notebook_source_from_run_py(monkeypatch, tmp_path):
+    g = _summary_internals(monkeypatch, tmp_path, user="runplan-nb-user")
+    g["model_dd"].value = "icepack"
+    g["mode_dd"].value = "cloud"
+    g["STATUS"]["selected_example_path"] = (
+        "/home/u/icepack/notebooks/tutorials/00-meshes-functions.ipynb")
+    g["run_target"].value = "run.py"
+    g["update_summary"]()
+
+    html = g["summary_html"].value
+    assert "Example:</span> 00-meshes-functions" in html
+    assert "Source:</span> <code>00-meshes-functions.ipynb</code>" in html
+    assert "converted to <code>run.py</code> before staging" in html
+    assert "Run target:</span> <code>run.py</code>" in html
+    # never implies AWS runs the .ipynb
+    assert ">00-meshes-functions.ipynb</code> <span class='icesee-subtle'>(executed on AWS Batch)" not in html
+    assert "Selected example:" not in html            # the vague old line is gone
+
+
+def test_cloud_run_plan_stays_truthful_for_an_issm_example(monkeypatch, tmp_path):
+    g = _summary_internals(monkeypatch, tmp_path, user="runplan-issm-user")
+    g["model_dd"].value = "issm"
+    g["mode_dd"].value = "cloud"
+    g["STATUS"]["selected_example_path"] = "/home/u/ISSM/examples/SquareIceShelf"
+    g["run_target"].value = "runme.m"
+    g["update_summary"]()
+
+    html = g["summary_html"].value
+    assert "Example:</span> SquareIceShelf" in html
+    assert "Run target:</span> <code>runme.m</code>" in html
+    # a directory example has no separate "Source:" file -- not fabricated
+    assert "Source:</span>" not in html
+    assert "converted to" not in html                 # no notebook language for ISSM
+
+
+def test_advanced_cloud_settings_helper_states_the_blank_equals_prepared_contract(
+    monkeypatch, tmp_path
+):
+    page = _build_gateway_page(monkeypatch, tmp_path, user="adv-helper-user")
+    htmls = []
+
+    def walk(w):
+        if isinstance(w, W.HTML):
+            htmls.append(w.value)
+        for c in getattr(w, "children", ()):
+            walk(c)
+
+    walk(page)
+    caption = next((h for h in htmls if "Leave these fields blank" in h), "")
+    assert caption, "advanced-cloud-settings helper text not found"
+    assert "CryoStack-prepared resources for the connected AWS account" in caption
+    assert "override that specific resource" in caption
+    assert "Developer / override settings." not in "\n".join(htmls)   # old text gone
