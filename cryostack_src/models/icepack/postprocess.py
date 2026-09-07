@@ -92,6 +92,34 @@ def _listdir_names(sub, suffixes=None):
 all_figures = sorted(set(figures) | set(_listdir_names("figures", FIGURE_SUFFIXES)))
 all_model = sorted(set(model_files) | set(_listdir_names("model")))
 
+# Per-figure metadata captured by cryostack_icepack_runner FROM THE FIGURE
+# ITSELF (suptitle / axes titles / axis labels). Never inferred from a
+# variable name, figure order, or the tutorial's identity -- a figure the
+# script gave no title just has no "title" key here, and the UI falls back
+# to a neutral "Figure N". Keyed by filename; only figures with real
+# extracted text get an entry.
+figures_meta = {}
+try:
+    _cap = json.loads((outputs / "figures" / "_captured.json").read_text(encoding="utf-8"))
+    for _e in (_cap if isinstance(_cap, list) else []):
+        _f = _e.get("file")
+        if not _f:
+            continue
+        _rec = {}
+        _title = (_e.get("suptitle")
+                  or next((t for t in (_e.get("axes_titles") or []) if t), "")).strip()
+        if _title:
+            _rec["title"] = _title
+        if _e.get("axes_titles"):
+            _rec["axes_titles"] = [t for t in _e["axes_titles"] if t]
+        if _e.get("xlabel"):
+            _rec["xlabel"] = _e["xlabel"]
+        if _e.get("ylabel"):
+            _rec["ylabel"] = _e["ylabel"]
+        figures_meta[_f] = _rec
+except Exception:
+    figures_meta = figures_meta or {}
+
 # A structured export (cryostack_icepack_export) may already have written a
 # richer metadata.json (fields / mesh / status "ok"). Never clobber that --
 # only fold in the figures / native files.
@@ -102,10 +130,15 @@ try:
 except Exception:
     existing = {}
 
+merged_fig_meta = dict(existing.get("figures_meta") or {})
+merged_fig_meta.update(figures_meta)
+
 if existing.get("fields") or existing.get("status") == "ok":
     existing["figures"] = sorted(set(existing.get("figures", [])) | set(all_figures))
     existing["model_files"] = sorted(set(existing.get("model_files", [])) | set(all_model))
     existing.setdefault("skipped", []).extend(skipped)
+    if merged_fig_meta:
+        existing["figures_meta"] = merged_fig_meta
     metadata = existing
 else:
     metadata = {
@@ -120,6 +153,7 @@ else:
         "solutions": [],
         "fields": [],
         "figures": all_figures,
+        "figures_meta": merged_fig_meta,
         "model_files": all_model,
         "skipped": skipped + list(existing.get("skipped", [])),
         "note": ("Icepack structured field export produced no fields; figures "

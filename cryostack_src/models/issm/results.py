@@ -414,6 +414,13 @@ class ResultPackage:
         figdir = self.outputs / "figures"
         return sorted(figdir.glob("*.png")) if figdir.is_dir() else []
 
+    def figure_captions(self) -> dict:
+        """``{filename: {title?, ...}}`` -- ISSM writes deterministic named
+        figures and records no per-figure caption metadata today, so this is
+        empty; the Results gallery then labels by filename."""
+        fm = self._meta.get("figures_meta")
+        return {k: dict(v) for k, v in fm.items()} if isinstance(fm, dict) else {}
+
     def model_mat(self) -> Path | None:
         if self.outputs is None:
             return None

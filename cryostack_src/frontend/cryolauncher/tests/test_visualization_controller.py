@@ -422,6 +422,51 @@ def test_icepack_run_shows_collected_figures_not_a_dead_end(tmp_path):
     assert "have not been fetched" not in c.status.value
 
 
+def test_icepack_figure_gallery_renders_titled_cards_and_hides_field_controls(tmp_path, capsys):
+    """00-meshes-functions class: figures but no tier-1 structured fields.
+    The gallery shows a titled card per figure (title straight from the
+    figure metadata, else 'Figure N'); the Solution/Field/Timestep block is
+    HIDDEN entirely (not just disabled) so nothing implies fields exist."""
+    m = _mgr(USER_A, tmp_path / "ws")
+    run = _register(m, run_id="ip-fig", model="icepack")
+    out = run.workspace_directory / "cache" / "outputs"
+    (out / "figures").mkdir(parents=True)
+    for n in (1, 2):
+        (out / "figures" / f"figure-0{n}.png").write_bytes(b"\x89PNG\r\n")
+    (out / "metadata.json").write_text(json.dumps({
+        "schema": "cryostack.icepack.results", "status": "artifacts",
+        "model": "icepack", "solutions": [], "fields": [],
+        "figures": ["figure-01.png", "figure-02.png"], "model_files": [],
+        "figures_meta": {
+            "figure-01.png": {"title": "Mesh of the unit square",
+                              "axes_titles": ["Mesh of the unit square"]},
+            # figure-02 deliberately has no title -> "Figure 2"
+        },
+    }))
+    c = _panel(m, fetch_results=lambda: None).controller
+    capsys.readouterr()
+    c.refresh()
+
+    # field controls HIDDEN (not just disabled) -- nothing implies fields exist
+    assert c.field_controls.layout.display == "none"
+    assert c.solution_dd.options == () and c.field_dd.options == ()
+    assert c.render_btn.disabled is True
+
+    # metadata survived collection -> package -> UI
+    caps = c._pkg.figure_captions()
+    assert caps["figure-01.png"]["title"] == "Mesh of the unit square"
+    assert "title" not in caps.get("figure-02.png", {})
+    assert c._figure_heading("figure-01.png", caps["figure-01.png"]) == "Mesh of the unit square"
+    assert c._figure_heading("figure-02.png", caps.get("figure-02.png", {})) == "Figure 2"
+
+    # the gallery rendered discrete titled cards (Output capture falls through
+    # to stdout outside a real kernel -- assert on the displayed repr)
+    shown = capsys.readouterr().out
+    assert "cryostack-figure-card" in shown
+    assert shown.count("cryostack-figure-title") == 2
+    assert "Mesh of the unit square" in shown and "Figure 2" in shown
+
+
 def test_icepack_artifacts_with_only_native_files_points_to_download(tmp_path):
     """An 'artifacts' run that produced native output files but no figures
     must not show an empty figure area with no guidance -- it points at

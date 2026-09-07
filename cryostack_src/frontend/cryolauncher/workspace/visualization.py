@@ -19,6 +19,7 @@ local package. Legacy runs (``status == "legacy"``) keep their existing PNGs and
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,7 +54,8 @@ class VisualizationController:
                  solution_dd: W.Dropdown, field_dd: W.Dropdown,
                  timestep_dd: W.Dropdown, render_btn: W.Button,
                  fetch_btn: W.Button, status: W.HTML, meta: W.HTML,
-                 plot_out: W.Output, fetch_results=None) -> None:
+                 plot_out: W.Output, fetch_results=None,
+                 field_controls: W.Widget | None = None) -> None:
         self.manager = manager
         self._selected_run_id = selected_run_id
         self.log_output = log_output
@@ -65,6 +67,10 @@ class VisualizationController:
         self.status = status
         self.meta = meta
         self.plot_out = plot_out
+        #: the Solution / Field / Timestep / Render block -- hidden entirely
+        #: (not just disabled) for a run with no structured fields, so an
+        #: artifacts-only run never implies fields exist.
+        self.field_controls = field_controls
         self._fetch_results = fetch_results
         self._pkg = None
         self._suppress = False
@@ -90,6 +96,10 @@ class VisualizationController:
         self.field_dd.disabled = not enabled
         self.timestep_dd.disabled = not enabled
         self.render_btn.disabled = not enabled
+
+    def _show_field_controls(self, show: bool):
+        if self.field_controls is not None:
+            self.field_controls.layout.display = "" if show else "none"
 
     def _show_fetch(self, show: bool):
         can_fetch = show and self._fetch_results is not None and bool(self._run_id())
@@ -149,6 +159,7 @@ class VisualizationController:
         if not run_id:
             self._pkg = None
             self._set_enabled(False)
+            self._show_field_controls(False)
             self._show_fetch(False)
             self.solution_dd.options = ()
             self.field_dd.options = ()
@@ -166,6 +177,7 @@ class VisualizationController:
         #               (Icepack today): figures + native output files only
         if status in ("legacy", "artifacts", "empty"):
             self._set_enabled(False)
+            self._show_field_controls(False)
             self._show_fetch(status != "legacy")   # a re-fetch can still help
             # artifact-aware: never show empty Solution/Field dropdowns for a
             # run that produced no structured fields.
@@ -206,6 +218,7 @@ class VisualizationController:
 
         if status == "missing" or not self._pkg.is_readable():
             self._set_enabled(False)
+            self._show_field_controls(False)
             self.solution_dd.options = ()
             self.field_dd.options = ()
             if status == "missing":
@@ -222,6 +235,7 @@ class VisualizationController:
 
         solutions = self._pkg.available_solutions()
         self._set_enabled(bool(solutions))
+        self._show_field_controls(bool(solutions))
         self._show_fetch(True)                  # keep a re-fetch affordance
         self.fetch_btn.description = "Re-fetch results"
         self._suppress = True
@@ -316,20 +330,73 @@ class VisualizationController:
                 f"{html.escape(result.reason or 'unsupported')}</span>")
             self._log(f"[viz] {sol}.{fld}: {result.reason}")
 
+    @staticmethod
+    def _figure_heading(name: str, meta: dict) -> str:
+        """Human-readable heading for one gallery figure. The title (if any)
+        comes straight from the figure itself -- never inferred. An untitled
+        captured figure gets a neutral "Figure N"; anything else is labelled
+        by its own filename stem."""
+        title = (meta.get("title") or "").strip()
+        if title:
+            return title
+        m = re.match(r"figure-0*(\d+)\.[a-z0-9]+$", name, re.IGNORECASE)
+        if m:
+            return f"Figure {int(m.group(1))}"
+        return Path(name).stem
+
     def _show_legacy_figures(self, arts: dict):
         figures = arts.get("figures") or []
-        shown = 0
+        captions: dict = {}
+        try:
+            if hasattr(self._pkg, "figure_captions"):
+                captions = self._pkg.figure_captions() or {}
+        except Exception:  # noqa: BLE001 - caption gaps never break the gallery
+            captions = {}
+
+        cards = []
+        for path in figures:
+            p = str(path)
+            low = p.lower()
+            if not low.endswith((".png", ".jpg", ".jpeg", ".gif")):
+                continue
+            try:
+                data = Path(p).read_bytes()
+            except OSError:
+                continue
+            name = Path(p).name
+            meta = captions.get(name) or {}
+            heading = self._figure_heading(name, meta)
+            fmt = "jpg" if low.endswith((".jpg", ".jpeg")) else (
+                "gif" if low.endswith(".gif") else "png")
+            sub_bits = [f"<code>{html.escape(name)}</code>"]
+            if meta.get("xlabel"):
+                sub_bits.append("x: " + html.escape(meta["xlabel"]))
+            if meta.get("ylabel"):
+                sub_bits.append("y: " + html.escape(meta["ylabel"]))
+            extra_titles = [t for t in (meta.get("axes_titles") or [])
+                            if t and t != meta.get("title")]
+            sub_html = " &nbsp;·&nbsp; ".join(sub_bits)
+            if extra_titles:
+                sub_html += ("<br>" + " · ".join(html.escape(t) for t in extra_titles))
+            card = W.VBox(
+                [
+                    W.HTML(f"<div class='cryostack-figure-title'>"
+                           f"{html.escape(heading)}</div>"),
+                    W.Image(value=data, format=fmt,
+                            layout=W.Layout(width="100%", height="auto")),
+                    W.HTML(f"<div class='cryostack-figure-sub'>{sub_html}</div>"),
+                ],
+                layout=W.Layout(width="100%", margin="0 0 14px 0"),
+            )
+            card.add_class("cryostack-figure-card")
+            cards.append(card)
+
         with self.plot_out:
             clear_output(wait=True)
-            for path in figures:
-                if str(path).lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
-                    try:
-                        display(Image(filename=str(path)))
-                        shown += 1
-                    except Exception:  # noqa: BLE001 - a bad figure file never breaks the panel
-                        pass
-        if shown:
-            self._log(f"[viz] showing {shown} figure(s) from this run")
+            if cards:
+                display(W.VBox(cards, layout=W.Layout(width="100%")))
+        if cards:
+            self._log(f"[viz] showing {len(cards)} figure card(s) for this run")
 
 
 def build_visualization_panel(*, manager: WorkspaceManager, selected_run_id,
@@ -353,12 +420,6 @@ def build_visualization_panel(*, manager: WorkspaceManager, selected_run_id,
                                         overflow="auto"))
     plot_out.add_class("cryostack-results-viewer")
 
-    controller = VisualizationController(
-        manager=manager, selected_run_id=selected_run_id, log_output=log_output,
-        solution_dd=solution_dd, field_dd=field_dd, timestep_dd=timestep_dd,
-        render_btn=render_btn, fetch_btn=fetch_btn, status=status, meta=meta,
-        plot_out=plot_out, fetch_results=fetch_results)
-
     def _lbl(text):
         return W.HTML(f"<div class='icesee-lbl'>{text}</div>",
                       layout=W.Layout(min_width="64px"))
@@ -369,15 +430,32 @@ def build_visualization_panel(*, manager: WorkspaceManager, selected_run_id,
         row.add_class("cryostack-field-row")
         return row
 
+    # Solution / Field / Timestep / Render -- one block, hidden entirely (not
+    # just disabled) when the selected run has no structured fields, so an
+    # artifacts-only run (e.g. 00-meshes-functions) never implies fields exist.
+    field_controls = W.VBox(
+        [
+            _field_row("Solution:", solution_dd),
+            _field_row("Field:", field_dd),
+            _field_row("Timestep:", timestep_dd),
+            W.HBox([render_btn], layout=W.Layout(gap="6px")),
+        ],
+        layout=W.Layout(width="100%", gap="6px"),
+    )
+
+    controller = VisualizationController(
+        manager=manager, selected_run_id=selected_run_id, log_output=log_output,
+        solution_dd=solution_dd, field_dd=field_dd, timestep_dd=timestep_dd,
+        render_btn=render_btn, fetch_btn=fetch_btn, status=status, meta=meta,
+        plot_out=plot_out, fetch_results=fetch_results,
+        field_controls=field_controls)
+
     container = W.VBox(
         [
             W.HTML("<div class='cryostack-section-label'>Field visualization</div>"),
             W.HBox([status, fetch_btn],
                    layout=W.Layout(align_items="center", gap="10px", flex_wrap="wrap")),
-            _field_row("Solution:", solution_dd),
-            _field_row("Field:", field_dd),
-            _field_row("Timestep:", timestep_dd),
-            W.HBox([render_btn], layout=W.Layout(gap="6px")),
+            field_controls,
             meta,
             plot_out,
         ],

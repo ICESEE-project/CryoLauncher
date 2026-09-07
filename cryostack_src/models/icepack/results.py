@@ -263,6 +263,14 @@ class IcepackResultPackage:
     def figures(self) -> list[Path]:
         return list_figures(self.outputs)
 
+    def figure_captions(self) -> dict:
+        """``{filename: {title?, axes_titles?, xlabel?, ylabel?}}`` -- captured
+        from the figures THEMSELVES by the run helper (never inferred). A
+        figure the script gave no title has no ``title`` key; the Results
+        gallery then falls back to a neutral "Figure N"."""
+        fm = self._meta.get("figures_meta")
+        return {k: dict(v) for k, v in fm.items()} if isinstance(fm, dict) else {}
+
     def model_mat(self) -> Path | None:
         return None
 

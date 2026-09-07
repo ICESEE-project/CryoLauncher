@@ -28,12 +28,16 @@ RUNNER_MODULE_NAME = "cryostack_icepack_runner.py"
 #:  3. persists every still-open Matplotlib figure the script produced but
 #:     never saved, to ``outputs/figures/figure-NN.png`` -- deterministic,
 #:     de-duplicated against figures the script saved itself, and NEVER by
-#:     injecting savefig() into the science script;
+#:     injecting savefig() into the science script. For each captured figure
+#:     it records what the figure ITSELF carries (suptitle, axes titles, x/y
+#:     labels) into ``outputs/figures/_captured.json`` -- never inferred from
+#:     a variable name, figure order, or the tutorial's identity;
 #:  4. runs :func:`export` on the resulting namespace (allow-list only,
 #:     never guesses a field).
 #: Steps 1, 3 and 4 are all non-fatal: a good science run is never turned
 #: into a failed one by figure capture or export.
 _RUNNER_SOURCE = '''# cryostack-icepack-runner (auto-generated -- do not edit)
+import json
 import os
 import runpy
 import sys
@@ -71,7 +75,16 @@ except Exception:
 sys.path.insert(0, run_dir)
 _ns = runpy.run_path(script, run_name="__main__")   # science: errors propagate
 
-# Persist any still-open figures the script drew but never saved.
+# Persist any still-open figures the script drew but never saved, and record
+# each figure's OWN metadata (title / labels) -- never inferred.
+def _text(obj):
+    try:
+        t = obj.get_text() if obj is not None else ""
+        return t.strip() if isinstance(t, str) else ""
+    except Exception:
+        return ""
+
+_captured = []
 try:
     if _plt is not None:
         _plt.Figure.savefig = _orig_savefig            # restore
@@ -80,14 +93,45 @@ try:
             if _num in _saved_fignums:
                 continue
             _idx += 1
-            _out = os.path.join(figures_dir, "figure-%02d.png" % _idx)
+            _fig = _plt.figure(_num)
+            _name = "figure-%02d.png" % _idx
             try:
-                _plt.figure(_num).savefig(_out, dpi=120, bbox_inches="tight")
+                _fig.savefig(os.path.join(figures_dir, _name),
+                             dpi=120, bbox_inches="tight")
             except Exception as _fe:
                 print("[cryostack][warn] figure capture failed:",
                       type(_fe).__name__, _fe)
+                continue
+            _entry = {"file": _name}
+            try:
+                _st = _text(getattr(_fig, "_suptitle", None))
+                if _st:
+                    _entry["suptitle"] = _st
+                _axt, _xl, _yl = [], "", ""
+                for _ax in _fig.get_axes():
+                    _t = _text(getattr(_ax, "title", None)) or (
+                        _ax.get_title().strip() if hasattr(_ax, "get_title") else "")
+                    if _t:
+                        _axt.append(_t)
+                    if not _xl and hasattr(_ax, "get_xlabel"):
+                        _xl = (_ax.get_xlabel() or "").strip()
+                    if not _yl and hasattr(_ax, "get_ylabel"):
+                        _yl = (_ax.get_ylabel() or "").strip()
+                if _axt:
+                    _entry["axes_titles"] = _axt
+                if _xl:
+                    _entry["xlabel"] = _xl
+                if _yl:
+                    _entry["ylabel"] = _yl
+            except Exception:
+                pass
+            _captured.append(_entry)
         if _idx:
             print("[cryostack] captured %d live matplotlib figure(s)" % _idx)
+        if _captured:
+            with open(os.path.join(figures_dir, "_captured.json"),
+                      "w", encoding="utf-8") as _fh:
+                json.dump(_captured, _fh)
 except Exception as _err:
     print("[cryostack][warn] matplotlib figure capture failed:",
           type(_err).__name__, _err)

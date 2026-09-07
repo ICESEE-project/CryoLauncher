@@ -467,6 +467,36 @@ CRYOSTACK_FRONTEND_CSS = r"""
     overflow-x: auto;
 }
 
+/* Results gallery: each captured figure is a discrete card (title + image +
+   filename/labels), not one continuous vertical stream of plots. */
+.cryostack-figure-card {
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 10px;
+    padding: 12px 12px 8px;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.cryostack-figure-card .cryostack-figure-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #172033;
+    margin-bottom: 8px;
+    line-height: 1.35;
+}
+.cryostack-figure-card .cryostack-figure-sub {
+    font-size: 11px;
+    color: #8a94a6;
+    margin-top: 6px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.cryostack-figure-card img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
 /* "Jump to latest" -- shown only while the user has scrolled up from the tail;
    sticks to the bottom-right of the Run Log viewer. */
 .cryostack-tail-jump {
