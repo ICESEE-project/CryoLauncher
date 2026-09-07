@@ -381,8 +381,28 @@ in the gateway:
   tests, IAM tightening, and one real run on a controlled account.
 - *Manual checkpoint:* `overnight/CLOUD_AWS_ACCEPTANCE.md` — provisioning and
   the first paid run are human-authorised.
-- *Not enabled:* a real ISSM cloud run still needs a MATLAB license configured
-  for the `aws` compute profile; preflight blocks it honestly until then.
+- *ISSM cloud MATLAB licensing (config seam).* "Container image ready" is **not**
+  "ISSM runtime ready". The combined image ships full MATLAB, but the campus
+  network license server is unreachable from Fargate, so a cloud ISSM run needs
+  its own license reachable from AWS. The seam
+  (`cryostack_src/cloud/matlab_license.py`): the user creates an AWS Secrets
+  Manager secret in **their own** account holding the `MLM_LICENSE_FILE` value
+  and registers only its **ARN** on the `AWSConnection`
+  (`matlab_license_secret_arn`, non-secret). `resolve_cloud_matlab_license()`
+  turns that into a `containerProperties.secrets` entry
+  (`{"name": "MLM_LICENSE_FILE", "valueFrom": <arn>}`) on the ISSM job
+  definition, and AWS Batch injects the value at container launch. CryoStack
+  never reads, logs, persists, or fingerprints the license value — only the ARN;
+  `assert_not_a_license_value()` and the connect-security tests guard against a
+  raw value ever reaching a manifest, command preview, or job-definition
+  fingerprint. Review shows a distinct **ISSM runtime** row
+  (`CloudRunReview.issm_runtime_ready`) that stays "Needs a MATLAB license"
+  until the ARN is configured, independent of the container/compute rows.
+- *Not enabled:* a real ISSM cloud run still needs that Secrets Manager ARN
+  configured on the connection **and** a `secretsmanager:GetSecretValue` grant
+  in the cross-account role for that ARN; preflight blocks it honestly until
+  then. The ARN input field in Cloud Environment plus the end-to-end validation
+  with a real license remain the externally-blocked remainder.
 
 ## Results and visualization
 
@@ -396,6 +416,30 @@ neutral package: `render_field` and `render_timeseries` in
 `cryostack_src/visualization/` back the Results panel's Solution / Field /
 Timestep controls. Given the same package and selection, the output is
 identical.
+
+**Icepack Remote↔Cloud parity.** Icepack has one shared scientific entrypoint
+regardless of backend: `cryostack_icepack_runner.py <script> <run-dir>`
+(generated from `cryostack_src/models/icepack/export.py`). It forces a headless
+`Agg` backend, executes the example **once** with `runpy.run_path`, captures
+every live Matplotlib figure plus figure metadata to
+`outputs/figures/_captured.json`, and runs the tier-1 allow-list structured
+export from that same namespace. Cloud stages it via
+`stage_example_for_run(extra_files=...)`; Remote stages it through the sbatch
+heredoc — byte-identical helper text (`test_icepack_remote_cloud_parity.py`
+asserts this). The stdlib collector `cryostack_icepack_postprocess.py` then
+reports an honest status (`ok` / `artifacts` / `empty`). Provider-specific
+execution (Slurm vs AWS Batch) differs; scientific and result behaviour do not.
+`00-meshes-functions` correctly yields figures but no recognised tier-1 fields,
+so the Solution / Field controls stay hidden — that is not a failure.
+
+**Execution-provider vocabulary.** CryoLauncher distinguishes: *execution mode*
+(Remote / Cloud / Local), *compute backend* (Remote → Slurm/HPC; Cloud → AWS
+Batch (Fargate)), *model environment* (ICESEE-Spack or ICESEE-Container),
+*model* (Icepack / ISSM), *container* (tag + immutable digest + provenance), and
+*experiment* (selected example + source + run target). History cards, the Run
+Plan, and manifests render these as separate rows and derive a historical run's
+identity from its **persisted metadata**, never the current UI defaults — a
+legacy widget such as `backend_dd` never determines cloud semantics.
 
 ## Testing
 
