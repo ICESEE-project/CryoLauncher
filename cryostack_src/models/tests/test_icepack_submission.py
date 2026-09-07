@@ -79,8 +79,17 @@ def render_icepack(monkeypatch):
 
 def test_icepack_job_collects_outputs_and_has_no_matlab(render_icepack):
     txt = render_icepack(backend="container")
-    # the scientific run
-    assert 'with-icepack bash -lc' in txt and 'python "ice-shelf.py"' in txt
+    # the scientific run: ONE step, via the shared runner (same contract as
+    # the Cloud path) inside with-icepack -- runs the science, captures
+    # headless figures + metadata, then structured-exports.
+    assert "with-icepack bash -lc" in txt
+    assert "cryostack_icepack_runner.py" in txt and 'ice-shelf.py"' in txt
+    assert "cryostack_icepack_export.py" in txt          # exporter staged
+    # the science exit code is NOT swallowed (primary run, not the old
+    # non-fatal appended re-run)
+    assert "icepack structured export step failed (non-fatal)" not in txt
+    # the science script is not ALSO run bare (no double execution)
+    assert 'python "ice-shelf.py"\n' not in txt
     # the neutral collection step
     assert "CRYOSTACK_RUN_STARTED" in txt
     assert "cryostack_icepack_postprocess.py" in txt

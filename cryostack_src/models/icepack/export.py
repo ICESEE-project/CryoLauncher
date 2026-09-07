@@ -176,41 +176,56 @@ def build_export_shell_block(
     stack_binds: str = "",
     run_file_name: str,
     run_file_py: str = "",
+    primary: bool = False,
 ) -> str:
-    """A **non-fatal** sbatch block, appended after the Icepack run, that runs
-    the structured exporter in the ``with-icepack`` Firedrake environment.
+    """The Icepack science + capture + export step for a Remote/SLURM job.
 
-    v1 re-runs the example script once inside the runner to capture its final
-    ``Function`` namespace (deterministic; the tutorial spin-ups are
-    idempotent). Folding this into the run block itself to avoid the second run
-    is a tracked optimisation (see AGENT_TRAIL / MORNING_REPORT P2).
+    It stages ``cryostack_icepack_export.py`` + ``cryostack_icepack_runner.py``
+    and invokes the runner in the ``with-icepack`` Firedrake environment. The
+    runner runs the example script ONCE (``runpy.run_path`` -- errors
+    propagate), forces a headless Matplotlib backend, persists every
+    still-open figure + its metadata, then structured-exports the namespace
+    (allow-list only).
+
+    ``primary=True`` (the current Remote path): this block IS the run -- the
+    science exit code propagates and a ``.ipynb`` target is nbconvert'd
+    first, exactly like the Cloud runner (``cryostack_src.cloud.runtime``).
+    So Cloud and Remote share ONE Icepack execution contract; only the
+    provider wrapper (apptainer vs. Fargate) differs.
+
+    ``primary=False`` (legacy, non-fatal appended step -- kept for callers
+    that still run the science separately): a failure here only warns.
     """
-    script_in_example = run_file_py if run_file_name.endswith(".ipynb") else run_file_name
-    if not script_in_example or not script_in_example.endswith(".py"):
+    target = run_file_name
+    py_name = run_file_py if run_file_name.endswith(".ipynb") else run_file_name
+    if not py_name or not py_name.endswith(".py"):
         return "\n# (no Python entrypoint for Icepack structured export)\n"
 
     export_path = f"{run_dir}/{EXPORT_MODULE_NAME}"
     runner_path = f"{run_dir}/{RUNNER_MODULE_NAME}"
+    nbconvert = ""
+    if primary and target.endswith(".ipynb"):
+        nbconvert = f'jupyter nbconvert --to script "{example_dir}/{target}" && '
     inner = (
-        f'cd "{example_dir}" && '
-        f'python "{runner_path}" "{example_dir}/{script_in_example}" "{run_dir}"'
+        f'cd "{example_dir}" && {nbconvert}'
+        f'python "{runner_path}" "{example_dir}/{py_name}" "{run_dir}"'
     )
+    tail = "" if primary else (
+        ' || echo "[cryostack][warn] icepack structured export step failed (non-fatal)"')
 
     if backend == "spack":
-        run_line = (
-            f'( source "{spack_path}/scripts/activate.sh" && {inner} ) '
-            '|| echo "[cryostack][warn] icepack structured export step failed (non-fatal)"'
-        )
+        run_line = f'( source "{spack_path}/scripts/activate.sh" && {inner} ){tail}'
     else:
         run_line = (
             f'apptainer exec '
             f'-B "{example_dir}":"{example_dir}","{run_dir}":"{run_dir}"{stack_binds} '
-            f'"{sif_path}" with-icepack bash -lc \'{inner}\' '
-            '|| echo "[cryostack][warn] icepack structured export step failed (non-fatal)"'
+            f'"{sif_path}" with-icepack bash -lc \'{inner}\'{tail}'
         )
 
+    heading = ("CryoStack Icepack run + capture + structured export"
+               if primary else "CryoStack Icepack structured export (non-fatal)")
     return f'''
-# --- CryoStack Icepack structured export (non-fatal) ------------------
+# --- {heading} ------------------
 mkdir -p "{run_dir}/outputs"
 {_heredoc(export_path, export_module_source(), "CRYOSTACK_ICEPACK_EXPORT_EOF")}
 {_heredoc(runner_path, runner_module_source(), "CRYOSTACK_ICEPACK_RUNNER_EOF")}

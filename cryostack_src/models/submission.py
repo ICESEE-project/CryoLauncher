@@ -517,16 +517,12 @@ cd "{remote_example_dir}"
 matlab -nodesktop -nosplash -r "{issm_matlab_setup} ICESEE_RUN_DIR='{remote_run_dir}'; setenv('ICESEE_RUN_DIR','{remote_run_dir}'); run('{target_m}'); run('../postprocess_icesee.m'); exit"
 '''
             elif model == "icepack":
-                if run_file_name.endswith(".py"):
+                if run_file_name.endswith((".py", ".ipynb")):
+                    # Icepack science + headless figure capture + structured
+                    # export are ONE step -- build_icepack_export_block(
+                    # primary=True) appended below. Same contract as Cloud.
                     run_block = f'''
 cd "{remote_example_dir}"
-python "{run_file_name}"
-'''
-                elif run_file_name.endswith(".ipynb"):
-                    run_block = f'''
-cd "{remote_example_dir}"
-jupyter nbconvert --to script "{run_file_name}"
-python "{run_file_py}"
 '''
                 else:
                     run_block = f'''
@@ -565,21 +561,12 @@ apptainer exec {matlab_env_flag}{_issm_container_mpi_env()}\
 "{sif_path}" with-issm matlab -nodesktop -nosplash -r "cd('/opt/ISSM/examples'); ICESEE_RUN_DIR='{remote_run_dir}'; setenv('ICESEE_RUN_DIR','{remote_run_dir}'); run('{target_m}'); run('{remote_run_dir}/postprocess_icesee.m'); exit"
 '''
         else:
-            if run_file_name.endswith(".py"):
+            if run_file_name.endswith((".py", ".ipynb")):
+                # Icepack science + capture + export = ONE step, shared with
+                # Cloud -- build_icepack_export_block(primary=True) below.
                 run_block = f'''
 mkdir -p "{remote_exec_dir}"
 {_stack_setup}
-apptainer exec \
--B "{remote_example_dir}":/workspace/example,"{remote_exec_dir}":/workspace/run{_stack_binds} \
-"{sif_path}" with-icepack bash -lc 'cd /workspace/example && python "{run_file_name}"'
-'''
-            elif run_file_name.endswith(".ipynb"):
-                run_block = f'''
-mkdir -p "{remote_exec_dir}"
-{_stack_setup}
-apptainer exec \
--B "{remote_example_dir}":/workspace/example,"{remote_exec_dir}":/workspace/run{_stack_binds} \
-"{sif_path}" with-icepack bash -lc 'cd /workspace/example && jupyter nbconvert --to script "{run_file_name}" && python "{run_file_py}"'
 '''
             else:
                 run_block = f'''
@@ -599,6 +586,7 @@ apptainer exec "{sif_path}" with-icepack python -c "import icepack; print('Icepa
             spack_path=locals().get("spack_path", ""),
             stack_binds=locals().get("_stack_binds", ""),
             run_file_name=run_file_name, run_file_py=run_file_py,
+            primary=True,
         )
         body = body + "\n" + build_icepack_collection_block(
             run_dir=remote_run_dir, example_dir=remote_example_dir,
@@ -924,16 +912,12 @@ cd "{remote_example_dir}"
 matlab -nodesktop -nosplash -r "{issm_matlab_setup} ICESEE_RUN_DIR='{remote_run_dir}'; setenv('ICESEE_RUN_DIR','{remote_run_dir}'); run('{target_m}'); run('../postprocess_icesee.m'); exit"
 '''
             elif model == "icepack":
-                if run_file_name.endswith(".py"):
+                if run_file_name.endswith((".py", ".ipynb")):
+                    # Icepack science + headless figure capture + structured
+                    # export are ONE step -- build_icepack_export_block(
+                    # primary=True) appended below. Same contract as Cloud.
                     run_block = f'''
 cd "{remote_example_dir}"
-python "{run_file_name}"
-'''
-                elif run_file_name.endswith(".ipynb"):
-                    run_block = f'''
-cd "{remote_example_dir}"
-jupyter nbconvert --to script "{run_file_name}"
-python "{run_file_py}"
 '''
                 else:
                     run_block = f'''
@@ -991,21 +975,12 @@ apptainer exec {matlab_env_flag}{_issm_container_mpi_env()}\
 "{sif_path}" with-issm matlab -nodesktop -nosplash -r "cd('/opt/ISSM/examples'); ICESEE_RUN_DIR='{remote_run_dir}'; setenv('ICESEE_RUN_DIR','{remote_run_dir}'); run('{target_m}'); run('{remote_run_dir}/postprocess_icesee.m'); exit"
 '''
             elif model == "icepack":
-                if run_file_name.endswith(".py"):
+                if run_file_name.endswith((".py", ".ipynb")):
+                    # Icepack science + capture + export = ONE step, shared
+                    # with Cloud -- build_icepack_export_block(primary=True).
                     run_block = f'''
 mkdir -p "{remote_exec_dir}"
 {_stack_setup}
-apptainer exec \
--B "{remote_example_dir}":/workspace/example,"{remote_exec_dir}":/workspace/run{_stack_binds} \
-"{sif_path}" with-icepack bash -lc 'cd /workspace/example && python "{run_file_name}"'
-'''
-                elif run_file_name.endswith(".ipynb"):
-                    run_block = f'''
-mkdir -p "{remote_exec_dir}"
-{_stack_setup}
-apptainer exec \
--B "{remote_example_dir}":/workspace/example,"{remote_exec_dir}":/workspace/run{_stack_binds} \
-"{sif_path}" with-icepack bash -lc 'cd /workspace/example && jupyter nbconvert --to script "{run_file_name}" && python "{run_file_py}"'
 '''
                 else:
                     run_block = f'''
@@ -1029,6 +1004,7 @@ apptainer exec "{sif_path}" with-icepack python -c "import icepack; print('Icepa
             spack_path=locals().get("spack_path", ""),
             stack_binds=locals().get("_stack_binds", ""),
             run_file_name=run_file_name, run_file_py=run_file_py,
+            primary=True,
         )
         body = body + "\n" + build_icepack_collection_block(
             run_dir=remote_run_dir, example_dir=remote_example_dir,
