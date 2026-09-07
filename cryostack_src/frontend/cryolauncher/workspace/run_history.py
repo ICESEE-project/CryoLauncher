@@ -144,11 +144,17 @@ def build_workspace_history_panel(
             selected.value = "<div class='icesee-subtle'>No run selected.</div>"
             files.value = "<div class='icesee-subtle'>Select a run to inspect its workspace.</div>"
             return
+        _backend_label = {
+            "aws": "AWS Batch (Fargate)",
+        }.get((run.backend or "").strip().lower(), run.backend)
+        _mode_label = {
+            "cloud": "Cloud", "remote": "Remote", "local": "Local",
+        }.get((run.execution_mode or "").strip().lower(), run.execution_mode)
         selected.value = (
             "<div class='cryostack-selected-run-card'>"
             f"<div><span>Model</span><b>{html.escape(run.model.upper())}</b></div>"
-            f"<div><span>Backend</span><b>{html.escape(run.backend)}</b></div>"
-            f"<div><span>Execution</span><b>{html.escape(run.execution_mode)}</b></div>"
+            f"<div><span>Backend</span><b>{html.escape(_backend_label)}</b></div>"
+            f"<div><span>Execution</span><b>{html.escape(_mode_label)}</b></div>"
             f"<div><span>Job ID</span><b>{html.escape(str(run.jobid or '—'))}</b></div>"
             f"<div><span>Status</span>{status_badge(run.status)}</div>"
             "</div>"

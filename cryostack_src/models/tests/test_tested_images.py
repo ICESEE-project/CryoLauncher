@@ -45,6 +45,18 @@ def test_registry_entry_is_the_combined_image_with_verified_digest():
     assert img.stack_profile == "tested"
 
 
+def test_public_url_points_at_the_exact_docker_hub_tag():
+    img = get_tested_image(_KEY)
+    assert img.public_url == (
+        "https://hub.docker.com/r/bkyanjo/icesee-combined/tags?name=v1.0.1")
+    # a bare / unparseable reference yields no link, never a wrong one
+    from cryostack_src.models.stack.images import TestedImage
+    assert TestedImage(key="k", label="l", reference="scratch",
+                       digest="", models=()).public_url is None
+    assert TestedImage(key="k", label="l", reference="ghcr.io/x/y:1",
+                       digest="", models=()).public_url is None
+
+
 def test_superseded_v1_0_0_stays_registered_unmodified():
     """The old entry is never deleted or overwritten when a newer tested
     image is added -- its digest is a historical fact, not something a

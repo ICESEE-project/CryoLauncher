@@ -76,9 +76,25 @@ for root in search_roots:
             continue
         (figures if suffix in FIGURE_SUFFIXES else model_files).append(dest.name)
 
+# Fold in anything ALREADY sitting in outputs/ -- e.g. figures the run
+# captured directly (cryostack_icepack_runner's headless-figure sweep) or a
+# structured exporter's own native artifacts -- so the reported status
+# reflects everything present, not only what this sweep copied in.
+def _listdir_names(sub, suffixes=None):
+    d = outputs / sub
+    if not d.is_dir():
+        return []
+    return sorted(
+        p.name for p in d.iterdir()
+        if p.is_file() and (suffixes is None or p.suffix.lower() in suffixes)
+    )
+
+all_figures = sorted(set(figures) | set(_listdir_names("figures", FIGURE_SUFFIXES)))
+all_model = sorted(set(model_files) | set(_listdir_names("model")))
+
 # A structured export (cryostack_icepack_export) may already have written a
 # richer metadata.json (fields / mesh / status "ok"). Never clobber that --
-# only fold in the figures / native files this collector found.
+# only fold in the figures / native files.
 meta_path = outputs / "metadata.json"
 existing = {}
 try:
@@ -87,8 +103,8 @@ except Exception:
     existing = {}
 
 if existing.get("fields") or existing.get("status") == "ok":
-    existing["figures"] = sorted(set(existing.get("figures", [])) | set(figures))
-    existing["model_files"] = sorted(set(existing.get("model_files", [])) | set(model_files))
+    existing["figures"] = sorted(set(existing.get("figures", [])) | set(all_figures))
+    existing["model_files"] = sorted(set(existing.get("model_files", [])) | set(all_model))
     existing.setdefault("skipped", []).extend(skipped)
     metadata = existing
 else:
@@ -96,12 +112,15 @@ else:
         "schema": "%SCHEMA%",
         "version": existing.get("version", 1),
         "model": "icepack",
-        "status": "artifacts" if (figures or model_files) else existing.get("status", "empty"),
+        # honest, source-agnostic: ok is decided by the exporter (branch
+        # above); here it is artifacts when ANY figure / native file is
+        # present, and empty only when truly nothing persistent exists.
+        "status": "artifacts" if (all_figures or all_model) else existing.get("status", "empty"),
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "solutions": [],
         "fields": [],
-        "figures": sorted(set(figures)),
-        "model_files": sorted(set(model_files)),
+        "figures": all_figures,
+        "model_files": all_model,
         "skipped": skipped + list(existing.get("skipped", [])),
         "note": ("Icepack structured field export produced no fields; figures "
                  "and native output files are collected here."),

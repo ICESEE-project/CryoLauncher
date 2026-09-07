@@ -703,3 +703,124 @@ def test_issm_cloud_submit_never_gets_the_icepack_extra_file(monkeypatch, tmp_pa
     assert not captured["extra_files"]         # None (or empty) for ISSM
     if captured["extra_files"]:
         assert ICEPACK_POSTPROCESS_FILENAME not in captured["extra_files"]
+
+
+# ── checkpoint: container provenance + execution-summary semantics ───────
+def _summary_internals(monkeypatch, tmp_path, *, user):
+    page = _build_gateway_page(monkeypatch, tmp_path, user=user)
+    _, update_visibility = _find_widget_by_observer(page, "update_visibility")
+    update_summary = _freevar(update_visibility, "update_summary")
+    return {
+        "update_summary": update_summary,
+        "summary_html": _freevar(update_summary, "summary_html"),
+        "mode_dd": _freevar(update_summary, "mode_dd"),
+        "model_dd": _freevar(update_summary, "model_dd"),
+        "backend_dd": _freevar(update_summary, "backend_dd"),
+        "command_preview": _freevar(update_summary, "command_preview"),
+    }
+
+
+def test_execution_summary_has_an_explicit_cloud_branch(monkeypatch, tmp_path):
+    """A cloud run must not read backend_dd (still 'spack' by default) -- it
+    shows the AWS Batch compute substrate, the container model environment,
+    and the exact tested image tag + digest."""
+    from cryostack_src.models.stack import default_tested_image_for_model
+
+    g = _summary_internals(monkeypatch, tmp_path, user="cloud-summary-user")
+    g["model_dd"].value = "icepack"
+    g["backend_dd"].value = "spack"          # deliberately the stale default
+    g["mode_dd"].value = "cloud"
+    g["update_summary"]()
+
+    html = g["summary_html"].value
+    assert "Execution mode:</span> Cloud" in html
+    assert "Cloud backend:</span> AWS Batch (Fargate)" in html
+    assert "Model environment:</span> ICESEE-Container (Spack-built stack)" in html
+    assert "Model:</span> ICEPACK" in html
+    assert "ICESEE-Spack" not in html                 # the old wrong label is gone
+    img = default_tested_image_for_model("icepack")
+    assert img.reference in html
+    assert img.digest[:22] in html
+    # command preview no longer shows a spack / apptainer command
+    cmd = g["command_preview"].value
+    assert "aws batch submit-job" in cmd
+    assert "apptainer" not in cmd and "spack" not in cmd.lower()
+
+
+def test_execution_summary_remote_spack_and_container_unchanged(monkeypatch, tmp_path):
+    g = _summary_internals(monkeypatch, tmp_path, user="remote-summary-user")
+    g["model_dd"].value = "issm"
+    g["mode_dd"].value = "remote"
+
+    g["backend_dd"].value = "spack"
+    g["update_summary"]()
+    html_spack = g["summary_html"].value
+    assert "Backend:</span> ICESEE-Spack" in html_spack
+    assert "Cloud backend:" not in html_spack
+
+    g["backend_dd"].value = "container"
+    g["update_summary"]()
+    html_container = g["summary_html"].value
+    assert "Backend:</span> ICESEE-Container" in html_container
+    assert "Cloud backend:" not in html_container
+
+
+def test_cloud_submit_freezes_the_container_image_into_run_provenance(monkeypatch, tmp_path):
+    """_register_cloud_run must persist the exact tested image tag + digest
+    AND a container/software provenance block (the SAME manifest schema the
+    Remote container path uses) so a historical run never drifts when the
+    default image changes."""
+    from cryostack_src.models.stack import default_tested_image_for_model
+
+    launch_handler = _build_gateway_and_launch_handler(
+        monkeypatch, tmp_path, user="cloud-prov-user")
+    submit_fn = _freevar(launch_handler, "_submit_cloud_run")
+    _cloud = _freevar(submit_fn, "_cloud")
+    reg = _cloud["controller"]._register_run          # == _register_cloud_run
+    workspace_bridge = _freevar(reg, "workspace_bridge")
+
+    started = {}
+
+    def fake_start_run(**kw):
+        started.update(kw)
+
+    monkeypatch.setattr(workspace_bridge, "start_run", fake_start_run)
+
+    img = default_tested_image_for_model("icepack")
+
+    class _Handle:
+        model = "icepack"
+        job_id = "job-xyz"
+        run_id = "run-xyz"
+        s3_run = "s3://cryostack-runs-774888247882/runs/u/run-xyz"
+        region = "us-east-2"
+        account_id = "774888247882"
+        example = "00-meshes-functions"
+        vcpu = 2
+        memory_gib = 8
+        expected_runtime_minutes = 5
+        cost_public = {}
+        metadata = {}
+        image_key = img.key
+        image_label = img.label
+        image_reference = img.reference
+        image_digest = img.digest
+
+    class _Result:
+        metadata = {"job_queue": "q", "job_definition": "cryostack-icepack"}
+
+    reg(handle=_Handle(), result=_Result())
+
+    md = started["metadata"]
+    assert md["image_reference"] == img.reference
+    assert md["image_digest"] == img.digest
+    assert md["image_key"] == img.key
+    # reused container/software provenance schema (not a cloud-only format)
+    container = started["container"]
+    assert container["source"] == "docker"
+    assert container["digest"] == img.digest
+    assert img.reference in container["reference"]
+    assert container["build_provenance"]["tested_image"] == img.key
+    assert started["software"]                      # per-component provenance present
+    assert started["backend"] == "aws"
+    assert started["execution_mode"] == "cloud"

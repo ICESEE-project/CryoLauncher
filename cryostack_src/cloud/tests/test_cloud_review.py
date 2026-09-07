@@ -162,3 +162,51 @@ def test_review_public_dict_carries_no_secret_and_no_external_id():
     for forbidden in ("AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "ExternalId",
                       "external_id", "cryostack:"):
         assert forbidden not in blob
+
+
+# -- container image provenance -------------------------------------
+def test_review_resolves_the_tested_container_image_for_the_model():
+    from cryostack_src.models.stack import default_tested_image_for_model
+
+    for model in ("issm", "icepack"):
+        cfg = resolve_cloud_config(bucket="cryostack-runs-774888247882", model=model)
+        r = _review(config=cfg, model=model)
+        img = default_tested_image_for_model(model)
+        assert img is not None
+        assert r.image_reference == img.reference
+        assert r.image_digest == img.digest
+        assert r.image_label == img.label
+        assert r.image_key == img.key
+        assert r.image_public_url.startswith("https://hub.docker.com/")
+        pub = r.to_public_dict()
+        assert pub["image_reference"] == img.reference
+        assert pub["image_digest"] == img.digest
+
+
+def test_digest_changes_when_the_tested_image_changes():
+    base = dict(config=_cfg(), model="issm", example="x", run_target="r",
+                account_id="A")
+    a = review_digest(**base, image_digest="sha256:aaaa")
+    b = review_digest(**base, image_digest="sha256:bbbb")
+    assert a != b
+    # default (no image) is still stable
+    assert review_digest(**base) == review_digest(**base)
+
+
+def test_changing_the_default_image_invalidates_an_open_review(monkeypatch):
+    import cryostack_src.models.stack.images as images
+
+    cfg = resolve_cloud_config(bucket="cryostack-runs-774888247882", model="icepack")
+    before = _review(config=cfg, model="icepack").digest
+
+    newer = images.TestedImage(
+        key="icesee-combined-v9.9.9", label="ICESEE Combined v9.9.9",
+        reference="bkyanjo/icesee-combined:v9.9.9",
+        digest="sha256:" + "9" * 64, models=("issm", "icepack"))
+    # a new CryoStack default, resolved first
+    reordered = {"icesee-combined-v9.9.9": newer, **images.TESTED_IMAGES}
+    monkeypatch.setattr(images, "TESTED_IMAGES", reordered)
+
+    after = _review(config=cfg, model="icepack")
+    assert after.digest != before
+    assert after.image_reference == "bkyanjo/icesee-combined:v9.9.9"

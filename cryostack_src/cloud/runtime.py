@@ -70,11 +70,16 @@ import re
 #: models with a complete cloud runtime path today
 SUPPORTED_CLOUD_MODELS: tuple[str, ...] = ("issm", "icepack")
 
-#: filename the Icepack branch above looks for under WORKDIR after phase 1 --
-#: the SAME name a caller must use as the extra_files key when staging (see
+#: filenames the Icepack branch looks for under WORKDIR after phase 1 -- the
+#: SAME names a caller must use as extra_files keys when staging (see
 #: icepack_postprocess_extra_files() below); a single source of truth so the
-#: two can never drift apart.
+#: runner script and the staging helper can never drift apart. The runner +
+#: export module names are re-exported from
+#: cryostack_src.models.icepack.export so the cloud and Remote/SLURM paths
+#: stage the identical helpers.
 ICEPACK_POSTPROCESS_FILENAME = "cryostack_icepack_postprocess.py"
+ICEPACK_RUNNER_FILENAME = "cryostack_icepack_runner.py"
+ICEPACK_EXPORT_FILENAME = "cryostack_icepack_export.py"
 
 #: version of the structured-result contract the run must produce
 RESULT_CONTRACT_VERSION = 1
@@ -196,32 +201,46 @@ case "${CRYOSTACK_MODEL}" in
   icepack)
     # notebooks are converted to a script first (same rule as the local /
     # remote Icepack execution path in models/icepack/execution.py); a
-    # single stage, no license, no MATLAB.
+    # single stage, no license, no MATLAB. A materialized run.py already IS
+    # a script -- the *.ipynb branch only matters for a raw notebook target.
     case "${RUN_TARGET}" in
       *.ipynb)
         PY_TARGET="${RUN_TARGET%.ipynb}.py"
         with-icepack jupyter nbconvert --to script "${WORKDIR}/${RUN_TARGET}" \
-          && with-icepack python "${WORKDIR}/${PY_TARGET}"
-        rc=$?
+          || log "WARNING: nbconvert failed; the run will fail on the missing script"
+        SCRIPT="${WORKDIR}/${PY_TARGET}"
         ;;
       *)
-        with-icepack python "${WORKDIR}/${RUN_TARGET}"
-        rc=$?
+        SCRIPT="${WORKDIR}/${RUN_TARGET}"
         ;;
     esac
+    # Run through the CryoStack Icepack runner when it was staged (same
+    # helper the Remote/SLURM path uses -- cryostack_src/models/icepack/
+    # export.py):
+    #   * forces a headless Matplotlib backend (Agg) BEFORE the script
+    #     imports it -- the tutorials rely on Jupyter inline display;
+    #   * persists still-open figures the script drew to
+    #     outputs/figures/figure-NN.png (deterministic, de-duplicated, never
+    #     by injecting savefig into the science script);
+    #   * runs the allow-list structured field export (never guesses).
+    # The runner exits with the SCIENCE exit code; its extra steps are
+    # non-fatal. Falls back to a bare `python` if the helper wasn't staged.
+    if [ -f "${WORKDIR}/__CRYOSTACK_ICEPACK_RUNNER_FILENAME__" ]; then
+      with-icepack python "${WORKDIR}/__CRYOSTACK_ICEPACK_RUNNER_FILENAME__" \
+        "${SCRIPT}" "${WORKDIR}"
+      rc=$?
+    else
+      MPLBACKEND=Agg with-icepack python "${SCRIPT}"
+      rc=$?
+    fi
     log "icepack model runtime exit code: ${rc}"
-    # Portable output collector (models/icepack/postprocess.py) -- gathers
-    # figures / native files into outputs/ and writes an honest
-    # metadata.json. Best effort, even on a failed run (rc is never
-    # overwritten by this step): the science already happened.
-    #
-    # The collector is staged as an ACTUAL FILE alongside run.py (same
-    # convention as ISSM's postprocess_icesee.m) and downloaded to WORKDIR
-    # in phase 1 above -- NEVER embedded inline here. See this module's
-    # docstring for why: this whole script becomes the Batch job
-    # definition's command, which AWS caps at 8192 characters on every
-    # launch, and the collector's source alone is bigger than the entire
-    # rest of this runner combined.
+    # Portable stdlib collector (models/icepack/postprocess.py) -- folds any
+    # figures / native files into outputs/ and writes an HONEST status
+    # (ok | artifacts | empty), never clobbering the exporter's richer
+    # metadata. Best effort, even on a failed run (rc is never overwritten):
+    # the science already happened. Staged as an ACTUAL FILE alongside
+    # run.py -- NEVER embedded inline here (this whole script becomes the
+    # Batch job definition's command, capped at 8192 chars on every launch).
     if [ -f "${WORKDIR}/__CRYOSTACK_ICEPACK_PP_FILENAME__" ]; then
       if command -v python3 >/dev/null 2>&1; then
         CRYOSTACK_RUN_DIR="${WORKDIR}" CRYOSTACK_EXAMPLE_DIR="${WORKDIR}" \
@@ -264,22 +283,46 @@ def build_cloud_runner() -> str:
     """The generic cloud runner script (identical for every execution mode,
     and for every model -- see this module's docstring for why NO
     model-specific helper source may be embedded here). Only the Icepack
-    helper's FILENAME is substituted (a single source of truth shared with
-    :func:`icepack_postprocess_extra_files`), never its source text."""
-    return _RUNNER.replace(
-        "__CRYOSTACK_ICEPACK_PP_FILENAME__", ICEPACK_POSTPROCESS_FILENAME)
+    helper FILENAMES are substituted (a single source of truth shared with
+    :func:`icepack_postprocess_extra_files`), never their source text."""
+    return (
+        _RUNNER
+        .replace("__CRYOSTACK_ICEPACK_PP_FILENAME__", ICEPACK_POSTPROCESS_FILENAME)
+        .replace("__CRYOSTACK_ICEPACK_RUNNER_FILENAME__", ICEPACK_RUNNER_FILENAME)
+    )
 
 
 def icepack_postprocess_extra_files() -> dict[str, str]:
-    """The ``extra_files`` entry a cloud-run caller merges into
-    ``WorkspaceManager.stage_example_for_run`` so the Icepack output
-    collector is staged as an ordinary file alongside ``run.py`` -- the SAME
-    generic mechanism ISSM's own ``postprocess_icesee.m`` already uses.
-    Never embedded into the runner script itself (see the module docstring
-    and :data:`BATCH_CONTAINER_OVERRIDE_LIMIT`)."""
+    """The ``extra_files`` a cloud-run caller merges into
+    ``WorkspaceManager.stage_example_for_run`` so the Icepack post-run
+    helpers are staged as ordinary files alongside ``run.py`` -- the SAME
+    generic mechanism ISSM's own ``postprocess_icesee.m`` already uses, and
+    the SAME helper source the Remote/SLURM path stages
+    (``cryostack_src.models.icepack.export``). Never embedded into the runner
+    script itself (see the module docstring and
+    :data:`BATCH_CONTAINER_OVERRIDE_LIMIT`).
+
+    Three files:
+
+    * ``cryostack_icepack_runner.py`` -- forces a headless Matplotlib
+      backend, runs the science script, persists live figures, then runs the
+      structured export;
+    * ``cryostack_icepack_export.py`` -- the allow-list structured field
+      exporter (needs Firedrake -- runs in ``with-icepack``);
+    * ``cryostack_icepack_postprocess.py`` -- the stdlib collector that folds
+      figures / native files into ``outputs/`` and writes an honest status.
+    """
+    from cryostack_src.models.icepack.export import (
+        export_module_source,
+        runner_module_source,
+    )
     from cryostack_src.models.icepack.postprocess import build_postprocess
 
-    return {ICEPACK_POSTPROCESS_FILENAME: build_postprocess()}
+    return {
+        ICEPACK_RUNNER_FILENAME: runner_module_source(),
+        ICEPACK_EXPORT_FILENAME: export_module_source(),
+        ICEPACK_POSTPROCESS_FILENAME: build_postprocess(),
+    }
 
 
 def cloud_run_command() -> list[str]:

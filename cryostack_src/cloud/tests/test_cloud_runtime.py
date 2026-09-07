@@ -14,7 +14,9 @@ import json
 
 from cryostack_src.cloud.runtime import (
     BATCH_CONTAINER_OVERRIDE_LIMIT,
+    ICEPACK_EXPORT_FILENAME,
     ICEPACK_POSTPROCESS_FILENAME,
+    ICEPACK_RUNNER_FILENAME,
     RESULT_CONTRACT_VERSION,
     RUN_DESCRIPTOR_NAME,
     SUPPORTED_CLOUD_MODELS,
@@ -89,27 +91,39 @@ def test_runner_issm_runs_target_then_postprocess():
 
 
 # -- Icepack Cloud Execution checkpoint -----------------------------------
-def test_runner_icepack_runs_target_then_invokes_the_staged_collector():
-    """The generic runner INVOKES the Icepack output collector by filename
-    (staged alongside run.py -- see icepack_postprocess_extra_files) -- it
-    must never embed the collector's own source text. That embedding is
-    exactly what previously blew the runner past AWS Batch's 8192-character
-    container-overrides/command limit ("Container Overrides length must be
-    at most 8192")."""
+def test_runner_icepack_runs_via_the_staged_runner_then_collector():
+    """The generic runner INVOKES the staged Icepack helpers by filename
+    (cryostack_icepack_runner.py -> headless run + figure capture + export;
+    cryostack_icepack_postprocess.py -> stdlib collector) -- it must never
+    embed their source text. That embedding is exactly what previously blew
+    the runner past AWS Batch's 8192-character container-overrides limit."""
     r = build_cloud_runner()
-    assert 'with-icepack python "${WORKDIR}/${RUN_TARGET}"' in r
+    assert f'"${{WORKDIR}}/{ICEPACK_RUNNER_FILENAME}"' in r
+    assert f'if [ -f "${{WORKDIR}}/{ICEPACK_RUNNER_FILENAME}" ]; then' in r
     # notebook examples are converted first, same rule as local/remote
     assert "jupyter nbconvert --to script" in r
     assert f'if [ -f "${{WORKDIR}}/{ICEPACK_POSTPROCESS_FILENAME}" ]; then' in r
     assert f'python3 "${{WORKDIR}}/{ICEPACK_POSTPROCESS_FILENAME}"' in r
     assert 'CRYOSTACK_RUN_DIR="${WORKDIR}"' in r
-    # the collector's OWN source text must never appear in the runner
+    # the helpers' OWN source text must never appear in the runner
+    from cryostack_src.models.icepack.export import (
+        export_module_source, runner_module_source,
+    )
     from cryostack_src.models.icepack.postprocess import build_postprocess
     assert build_postprocess() not in r
+    assert runner_module_source() not in r
+    assert export_module_source() not in r
     # never the old deliberate block
     assert "Icepack cloud execution is not supported yet" not in r
     # no leftover substitution token
     assert "__CRYOSTACK" not in r
+
+
+def test_runner_icepack_falls_back_to_a_bare_python_when_the_helper_is_absent():
+    """A run that never staged the runner helper still executes the science
+    -- just headless (MPLBACKEND=Agg) and without figure capture / export."""
+    r = build_cloud_runner()
+    assert 'MPLBACKEND=Agg with-icepack python "${SCRIPT}"' in r
 
 
 def test_runner_icepack_postprocess_never_overrides_the_science_exit_code():
@@ -154,15 +168,24 @@ def test_runner_and_job_command_stay_safely_below_the_batch_override_limit():
         assert required in r
 
 
-def test_icepack_postprocess_extra_files_carries_the_real_collector_under_the_expected_name():
-    """The staging-side half of the contract: the SAME filename the runner
-    looks for, mapped to the actual collector source (not a stub)."""
+def test_icepack_postprocess_extra_files_carries_the_real_helpers_under_the_expected_names():
+    """The staging-side half of the contract: the SAME filenames the runner
+    looks for, mapped to the actual helper sources (not stubs), and the SAME
+    sources the Remote/SLURM path stages."""
+    from cryostack_src.models.icepack.export import (
+        export_module_source, runner_module_source,
+    )
     from cryostack_src.models.icepack.postprocess import build_postprocess
 
     files = icepack_postprocess_extra_files()
-    assert set(files) == {ICEPACK_POSTPROCESS_FILENAME}
+    assert set(files) == {
+        ICEPACK_RUNNER_FILENAME, ICEPACK_EXPORT_FILENAME, ICEPACK_POSTPROCESS_FILENAME,
+    }
     assert files[ICEPACK_POSTPROCESS_FILENAME] == build_postprocess()
-    assert len(files[ICEPACK_POSTPROCESS_FILENAME]) > 1000     # the real script, not a stub
+    assert files[ICEPACK_RUNNER_FILENAME] == runner_module_source()
+    assert files[ICEPACK_EXPORT_FILENAME] == export_module_source()
+    for text in files.values():
+        assert len(text) > 500                                # the real thing, not a stub
 
 
 def test_runner_propagates_true_exit_code_no_swallowing():

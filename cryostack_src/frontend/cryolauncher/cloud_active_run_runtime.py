@@ -99,6 +99,9 @@ def build_active_run_callbacks(
             region=v.get("region", ""), resource_text=_resource_text(v),
             elapsed_text=_hms(elapsed), cost_text=cost_text,
             expected_text=_minutes_label(v.get("expected_runtime_minutes")),
+            image_reference=v.get("image_reference", ""),
+            image_digest=v.get("image_digest", ""),
+            image_label=v.get("image_label", ""),
         )
 
     async def _tick_loop(gen: int) -> None:

@@ -243,6 +243,13 @@ class _RunHandle:
     cost_public: dict = field(default_factory=dict)
     #: the review digest this run was launched from (drift audit only)
     review_digest: str = ""
+    #: the CryoStack tested container image this run executes in -- carried
+    #: to the CLOUD RUN card and frozen into the run manifest at submit so a
+    #: historical run never drifts when the default image changes.
+    image_key: str = ""
+    image_label: str = ""
+    image_reference: str = ""
+    image_digest: str = ""
     #: monotonic seconds when the run left STAGING (set by the ticker owner)
     started_at: float = 0.0
 
@@ -313,6 +320,8 @@ class CloudRunController:
                 vcpu=h.vcpu, memory_gib=h.memory_gib,
                 expected_runtime_minutes=h.expected_runtime_minutes,
                 cost_public=dict(h.cost_public), job_id=h.job_id,
+                image_label=h.image_label, image_reference=h.image_reference,
+                image_digest=h.image_digest,
                 terminal=is_terminal(h.state),
             )
         except Exception:
@@ -440,6 +449,10 @@ class CloudRunController:
                 submit_kwargs.pop("_expected_runtime_minutes", 0) or 0),
             cost_public=dict(submit_kwargs.pop("_cost_public", None) or {}),
             review_digest=(submit_kwargs.pop("_review_digest", "") or ""),
+            image_key=(submit_kwargs.pop("_image_key", "") or "").strip(),
+            image_label=(submit_kwargs.pop("_image_label", "") or "").strip(),
+            image_reference=(submit_kwargs.pop("_image_reference", "") or "").strip(),
+            image_digest=(submit_kwargs.pop("_image_digest", "") or "").strip(),
         )
         self._task = self._spawn(self.run_once(**submit_kwargs))
 
@@ -607,11 +620,16 @@ class CloudRunController:
                account_id: str = "", example: str = "",
                vcpu: float = 0.0, memory_gib: float = 0.0,
                expected_runtime_minutes: float = 0.0, cost_public: dict | None = None,
+               image_key: str = "", image_label: str = "",
+               image_reference: str = "", image_digest: str = "",
                state: str = QUEUED) -> None:
         """Re-attach to a run that already exists (e.g. selected from run
         history after a kernel restart) and resume polling if it is not
         terminal. Status/log/terminate/retrieve then use a FRESH context for
-        the recorded ``account_id`` (BYO) -- no persisted STS credentials."""
+        the recorded ``account_id`` (BYO) -- no persisted STS credentials.
+
+        ``image_*`` come from the run manifest so the CLOUD RUN card shows
+        the image THIS run used, not whatever the current default is."""
         self._handle = _RunHandle(
             job_id=str(job_id), s3_run=str(s3_run), model=model,
             region=region, profile=profile, state=state,
@@ -619,6 +637,10 @@ class CloudRunController:
             vcpu=float(vcpu or 0), memory_gib=float(memory_gib or 0),
             expected_runtime_minutes=float(expected_runtime_minutes or 0),
             cost_public=dict(cost_public or {}),
+            image_key=(image_key or "").strip(),
+            image_label=(image_label or "").strip(),
+            image_reference=(image_reference or "").strip(),
+            image_digest=(image_digest or "").strip(),
         )
         self._set_state(state)
         if not is_terminal(state):

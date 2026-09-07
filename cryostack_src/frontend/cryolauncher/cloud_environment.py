@@ -655,11 +655,29 @@ def set_review_panel(widgets: "CloudEnvironmentWidgets", review) -> None:
             f"<b>Launch is blocked:</b><ul style='margin:4px 0 0 16px;padding:0;'>{items}</ul>"
             "</div>"
         )
+    image_rows = ""
+    if getattr(r, "image_reference", ""):
+        ref = escape_text(r.image_reference)
+        url = getattr(r, "image_public_url", "") or ""
+        ref_html = (f"<a href='{escape_text(url)}' target='_blank' "
+                    f"rel='noopener noreferrer'>{ref}</a>") if url else ref
+        digest = escape_text(r.image_digest or "")
+        short = (digest[:22] + "…") if digest.startswith("sha256:") else digest
+        image_rows = (
+            '<tr><td colspan="2" style="padding-top:6px;font-weight:700;'
+            'color:#172033;">Container image</td></tr>'
+            f'<tr><td style="padding:1px 12px 1px 0;">Image</td><td>{ref_html} '
+            '<span style="color:#96a1b4;">· Tested</span></td></tr>'
+            f'<tr><td style="padding:1px 12px 1px 0;">Digest</td>'
+            f'<td><code style="font-size:10px;">{short or "—"}</code></td></tr>'
+        )
+
     widgets.review_body.value = f"""
       <table style="font-size:11px;color:#66758d;border-collapse:collapse;width:100%;">
         <tr><td colspan="2" style="padding-top:4px;font-weight:700;color:#172033;">Experiment</td></tr>
         <tr><td style="padding:1px 12px 1px 0;width:130px;">Model</td><td>{escape_text(r.model.upper())}</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Example</td><td>{escape_text(r.example)}</td></tr>
+        {image_rows}
         <tr><td colspan="2" style="padding-top:6px;font-weight:700;color:#172033;">AWS</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Account</td><td><code>{escape_text(r.account_id)}</code></td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Region</td><td>{escape_text(r.region)}</td></tr>
@@ -764,6 +782,9 @@ def set_active_run_view(
     elapsed_text: str = "",
     cost_text: str = "",
     expected_text: str = "",
+    image_reference: str = "",
+    image_digest: str = "",
+    image_label: str = "",
 ) -> None:
     """Render the CLOUD RUN card. ``cost_text`` is a pre-formatted string
     ("<$0.01" / "$0.04" / "Unavailable") -- this function never prices."""
@@ -790,6 +811,12 @@ def set_active_run_view(
     rows = [("AWS", f"Account {escape_text(account_id or '—')} &middot; "
                     f"{escape_text(region or '—')}"),
             ("Resources", escape_text(resource_text or "—"))]
+    if image_reference:
+        _short = image_digest[:19] + "…" if image_digest.startswith("sha256:") else ""
+        rows.append(("Image",
+                     f"<code style='font-size:10px;'>{escape_text(image_reference)}</code>"
+                     + (f" <span style='color:#96a1b4;'>{escape_text(_short)}</span>"
+                        if _short else "")))
     if not terminal:
         rows.append(("Elapsed", escape_text(elapsed_text or "00:00")))
         rows.append(("Estimated cost so far",

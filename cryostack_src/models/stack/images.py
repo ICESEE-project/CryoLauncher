@@ -43,6 +43,24 @@ class TestedImage:
     def short_digest(self) -> str:
         return f"{self.digest[:15]}…" if self.digest.startswith("sha256:") else self.digest
 
+    @property
+    def public_url(self) -> str | None:
+        """A navigable page for this image on its public registry (Docker Hub
+        today), or ``None`` when the reference is not a recognisable Docker
+        Hub ``[docker.io/]<namespace>/<repo>[:<tag>]`` reference. Used to give
+        the Review / CLOUD RUN cards a link straight to the exact image."""
+        ref = self.reference.split("://", 1)[-1].split("@", 1)[0]
+        repo, _, tag = ref.partition(":")
+        parts = repo.split("/")
+        if parts and parts[0] in ("docker.io", "index.docker.io",
+                                  "registry-1.docker.io"):
+            parts = parts[1:]
+        if len(parts) != 2 or not all(parts):
+            return None
+        namespace, name = parts
+        base = f"https://hub.docker.com/r/{namespace}/{name}"
+        return f"{base}/tags?name={tag}" if tag else f"{base}/tags"
+
 
 # ── the registry ────────────────────────────────────────────────────────────
 # Insertion order matters: default_tested_image_for_model() returns the FIRST

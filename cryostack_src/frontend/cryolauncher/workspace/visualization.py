@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from pathlib import Path
 
 import ipywidgets as W
 from IPython.display import Image, clear_output, display
@@ -166,11 +167,32 @@ class VisualizationController:
         if status in ("legacy", "artifacts", "empty"):
             self._set_enabled(False)
             self._show_fetch(status != "legacy")   # a re-fetch can still help
+            # artifact-aware: never show empty Solution/Field dropdowns for a
+            # run that produced no structured fields.
             self.solution_dd.options = ()
             self.field_dd.options = ()
             arts = self._pkg.legacy_artifacts()
+            figs = arts.get("figures") or []
+            natives = (arts.get("native") or []) + (arts.get("mats") or [])
             if status == "artifacts":
-                note = _ARTIFACTS_NOTE
+                if figs:
+                    note = _ARTIFACTS_NOTE
+                elif natives:
+                    note = (
+                        "This run produced native model output files but no "
+                        "figures. Use <b>Download results</b> to retrieve them."
+                    )
+                else:
+                    note = _ARTIFACTS_NOTE
+                if natives:
+                    note += (
+                        f" &nbsp;·&nbsp; {len(natives)} native file"
+                        f"{'s' if len(natives) != 1 else ''}: <code>"
+                        + "</code> <code>".join(
+                            html.escape(Path(p).name) for p in natives[:6])
+                        + "</code>"
+                        + (" …" if len(natives) > 6 else "")
+                    )
             elif status == "empty":
                 note = _EMPTY_NOTE
             else:
@@ -296,13 +318,18 @@ class VisualizationController:
 
     def _show_legacy_figures(self, arts: dict):
         figures = arts.get("figures") or []
+        shown = 0
         with self.plot_out:
             clear_output(wait=True)
             for path in figures:
-                if str(path).lower().endswith(".png"):
-                    display(Image(filename=str(path)))
-        if figures:
-            self._log(f"[viz] legacy run: showing {len(figures)} existing figure(s)")
+                if str(path).lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                    try:
+                        display(Image(filename=str(path)))
+                        shown += 1
+                    except Exception:  # noqa: BLE001 - a bad figure file never breaks the panel
+                        pass
+        if shown:
+            self._log(f"[viz] showing {shown} figure(s) from this run")
 
 
 def build_visualization_panel(*, manager: WorkspaceManager, selected_run_id,

@@ -422,6 +422,28 @@ def test_icepack_run_shows_collected_figures_not_a_dead_end(tmp_path):
     assert "have not been fetched" not in c.status.value
 
 
+def test_icepack_artifacts_with_only_native_files_points_to_download(tmp_path):
+    """An 'artifacts' run that produced native output files but no figures
+    must not show an empty figure area with no guidance -- it points at
+    Download results and lists the files, and never shows field dropdowns."""
+    m = _mgr(USER_A, tmp_path / "ws")
+    run = _register(m, run_id="ip-nat", model="icepack")
+    out = run.workspace_directory / "cache" / "outputs"
+    (out / "model").mkdir(parents=True)
+    (out / "model" / "state.h5").write_bytes(b"\x89HDF")
+    (out / "metadata.json").write_text(json.dumps({
+        "schema": "cryostack.icepack.results", "status": "artifacts",
+        "model": "icepack", "solutions": [], "fields": [],
+        "figures": [], "model_files": ["state.h5"],
+    }))
+    c = _panel(m, fetch_results=lambda: None).controller
+    c.refresh()
+    assert c.render_btn.disabled is True
+    assert c.solution_dd.options == () and c.field_dd.options == ()
+    assert "Download results" in c.status.value
+    assert "state.h5" in c.status.value
+
+
 def test_icepack_empty_run_is_reported_as_such(tmp_path):
     m = _mgr(USER_A, tmp_path / "ws")
     run = _register(m, run_id="ip-2", model="icepack")

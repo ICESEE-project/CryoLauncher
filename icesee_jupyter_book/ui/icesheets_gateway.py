@@ -774,6 +774,43 @@ def build_icesheets_ui():
         #: late-bound; assigned once the CloudRunController is built (below).
         _cloud = {"controller": None}
 
+        def _default_tested_image(model: str):
+            """The CryoStack tested container image for ``model`` (what Prepare
+            Cloud mirrored into ECR). Deterministic; no AWS call."""
+            try:
+                from cryostack_src.models.stack import default_tested_image_for_model
+
+                return default_tested_image_for_model((model or "").strip().lower())
+            except Exception:  # noqa: BLE001
+                return None
+
+        def _cloud_container_provenance(handle):
+            """Reuse the SAME container/software provenance schema the Remote
+            container path records (manifest schema v2), anchored to the exact
+            tested-image key frozen on the handle at submit -- so a cloud run's
+            recorded image never drifts when CryoStack's default image
+            changes. Returns ``(container, software)`` (``{}, {}`` if there is
+            no tested image, e.g. developer mode)."""
+            key = getattr(handle, "image_key", "") or ""
+            if not key:
+                return {}, {}
+            try:
+                from cryostack_src.models.stack import resolve_stack
+
+                resolved = resolve_stack(
+                    model=(handle.model or "").strip().lower(),
+                    profile="tested", selections=None,
+                    container_source="docker", image_uri="",
+                    tested_image_key=key, digest_resolver=None,
+                )
+                return (resolved.get("container") or {},
+                        resolved.get("software") or {})
+            except Exception as _prov_err:  # noqa: BLE001 - never block a real run
+                with log_out:
+                    print("[cloud][provenance] (non-fatal)",
+                          type(_prov_err).__name__, _prov_err)
+                return {}, {}
+
         def _register_cloud_run(*, handle, result):
             """Enter a submitted cloud run into the experiment/workspace system --
             the same registration the Remote path uses."""
@@ -784,6 +821,7 @@ def build_icesheets_ui():
             )
             STATUS["batch_job_id"] = handle.job_id
             STATUS["cloud_run"] = s3_run
+            _container, _software = _cloud_container_provenance(handle)
             workspace_bridge.start_run(
                 name=str(handle.run_id or handle.job_id),
                 model=handle.model,
@@ -811,7 +849,15 @@ def build_icesheets_ui():
                     "expected_runtime_minutes": getattr(
                         handle, "expected_runtime_minutes", 0) or 0,
                     "cost_estimate": getattr(handle, "cost_public", {}) or {},
+                    # exact image this run used -- also in metadata so the
+                    # CLOUD RUN card can restore it on a page-refresh reattach
+                    "image_key": getattr(handle, "image_key", "") or "",
+                    "image_label": getattr(handle, "image_label", "") or "",
+                    "image_reference": getattr(handle, "image_reference", "") or "",
+                    "image_digest": getattr(handle, "image_digest", "") or "",
                 },
+                container=_container,
+                software=_software,
             )
 
         def _icepack_cloud_postprocess_files() -> dict:
@@ -915,9 +961,18 @@ def build_icesheets_ui():
                 ))
 
             status_chip.value = status_html("running")
-            _submit_extra = {}
+            # the tested container image this run executes in -- frozen into
+            # the run's provenance at submit so a historical run always shows
+            # the image it ACTUALLY used, even after the default changes.
+            _img = _default_tested_image(_model)
+            _submit_extra = {
+                "_image_key": getattr(_img, "key", "") or "",
+                "_image_label": getattr(_img, "label", "") or "",
+                "_image_reference": getattr(_img, "reference", "") or "",
+                "_image_digest": getattr(_img, "digest", "") or "",
+            }
             if review is not None:
-                _submit_extra = {
+                _submit_extra.update({
                     "_account_id": review.account_id,
                     "_example": review.example,
                     "_vcpu": review.vcpu,
@@ -925,7 +980,16 @@ def build_icesheets_ui():
                     "_expected_runtime_minutes": review.expected_runtime_minutes,
                     "_cost_public": review.cost.to_public_dict(),
                     "_review_digest": review.digest,
-                }
+                })
+                # prefer the exact image the review resolved (identical here,
+                # but keeps submit anchored to what the user reviewed)
+                if getattr(review, "image_reference", ""):
+                    _submit_extra.update({
+                        "_image_key": review.image_key,
+                        "_image_label": review.image_label,
+                        "_image_reference": review.image_reference,
+                        "_image_digest": review.image_digest,
+                    })
             _cloud["controller"].submit(
                 staged_source=str(staged_dir),
                 model=_model,
@@ -1457,6 +1521,28 @@ def build_icesheets_ui():
             backend = backend_dd.value
             run_file = selected_run_file()
             run_file_name = Path(run_file).name if run_file else ""
+            # Cloud runs are described to AWS Batch by three non-secret env
+            # values (see cryostack_src/cloud/drivers/aws/submit.py) -- the
+            # generic runner + model command are baked into the job
+            # definition, not composed here. Show the submission summary, not
+            # a spack / apptainer command that does not apply.
+            if mode_dd.value == "cloud":
+                _m = (model_dd.value or "issm").strip().lower()
+                _img = _default_tested_image(_m)
+                _jd, _ = resolve_job_definition(
+                    _m, batch_job_def.value.strip(), allow_list=_CLOUD_JOB_DEFS,
+                )
+                return (
+                    "aws batch submit-job \\\n"
+                    f"  --job-queue {batch_job_queue.value.strip() or '<derived>'} \\\n"
+                    f"  --job-definition {_jd} \\\n"
+                    "  --container-overrides '{\"environment\":["
+                    "{\"name\":\"CRYOSTACK_MODEL\",\"value\":\"" + _m + "\"},"
+                    "{\"name\":\"CRYOSTACK_RUN_TARGET\",\"value\":\""
+                    + (run_file_name or 'run.py') + "\"},"
+                    "{\"name\":\"CRYOSTACK_S3_RUN\",\"value\":\"s3://<bucket>/runs/<user>/<run-id>\"}]}'\n"
+                    f"# image: {getattr(_img, 'reference', '') or '<tested (default)>'}"
+                )
             return get_model_adapter(model_dd.value).build_run_command(
                 backend=backend,
                 target=run_file_name,
@@ -1770,6 +1856,38 @@ def build_icesheets_ui():
             selected_line = ""
             if selected:
                 selected_line = f"<div><span class='icesee-summary-k'>Selected example:</span> {selected}</div>"
+
+            # Cloud is its own execution mode: the compute substrate is AWS
+            # Batch/Fargate and the scientific stack is ALWAYS the tested
+            # container image (whose environment is Spack-built) -- backend_dd
+            # (spack vs. host-container-bind) does not apply and is not read
+            # here. Remote/Local keep the existing spack/container branches
+            # below, untouched.
+            if mode == "cloud":
+                _img = _default_tested_image(model)
+                _img_ref = getattr(_img, "reference", "") or ""
+                _img_digest = getattr(_img, "digest", "") or ""
+                _short = (_img_digest[:22] + "…") if _img_digest.startswith("sha256:") else _img_digest
+                _img_line = (
+                    f"<div><span class='icesee-summary-k'>Container image:</span> "
+                    f"{html.escape(_img_ref) or '<em>tested (default)</em>'}"
+                    + (f" <span class='icesee-subtle'>@ {html.escape(_short)}</span>" if _short else "")
+                    + "</div>"
+                )
+                summary_html.value = f"""
+                <div class="icesee-summary">
+                  <div><span class="icesee-summary-k">User mode:</span> {user_mode.title()}</div>
+                  <div><span class="icesee-summary-k">Execution mode:</span> Cloud</div>
+                  <div><span class="icesee-summary-k">Cloud backend:</span> AWS Batch (Fargate)</div>
+                  <div><span class="icesee-summary-k">Model environment:</span> ICESEE-Container (Spack-built stack)</div>
+                  <div><span class="icesee-summary-k">Model:</span> {model.upper()}</div>
+                  {_img_line}
+                  {selected_line}
+                  <div><span class="icesee-summary-k">Execution:</span> Runs the tested combined image on AWS Batch/Fargate; run inputs and outputs sync via S3.</div>
+                </div>
+                """
+                command_preview.value = build_model_command()
+                return
 
             if backend == "spack":
                 if model == "issm":
@@ -2882,13 +3000,16 @@ def build_icesheets_ui():
             return out
 
         def _cloud_review_digest() -> str:
+            _m = (model_dd.value or "issm").strip().lower()
+            _img = _default_tested_image(_m)
             return review_digest(
                 config=_cloud_run_config(),
-                model=(model_dd.value or "issm").strip().lower(),
+                model=_m,
                 example=_cloud_example_name(),
                 run_target=(Path(run_target.value or "runme.m").name),
                 account_id=_cloud_account_id_for_review(),
                 scientific_overrides=(md_panel.overrides() if model_dd.value == "issm" else {}),
+                image_digest=getattr(_img, "digest", "") or "",
             )
 
         def _cloud_account_id_for_review() -> str:
@@ -3560,6 +3681,7 @@ def build_icesheets_ui():
             if (run is not None and run.execution_mode == "cloud"
                     and ctl is not None and ctl.job_id != str(run.jobid or "")):
                 meta = run.metadata or {}
+                _rc = run.container or {}
                 ctl.attach(
                     job_id=str(run.jobid or ""),
                     s3_run=str(meta.get("cloud_run") or run.remote_directory or ""),
@@ -3571,6 +3693,11 @@ def build_icesheets_ui():
                     memory_gib=meta.get("memory_gib") or 0,
                     expected_runtime_minutes=meta.get("expected_runtime_minutes") or 0,
                     cost_public=meta.get("cost_estimate") or {},
+                    image_key=meta.get("image_key") or "",
+                    image_label=meta.get("image_label") or "",
+                    image_reference=(meta.get("image_reference")
+                                     or (_rc.get("reference") or "").replace("docker://", "")),
+                    image_digest=meta.get("image_digest") or _rc.get("digest") or "",
                     state={"submitted": "queued"}.get(run.status, run.status),
                 )
 

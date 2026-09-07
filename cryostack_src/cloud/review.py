@@ -95,6 +95,14 @@ class CloudRunReview:
     digest: str = ""
     # the resolved config the launch path must use verbatim
     config: CloudRunConfig | None = None
+    # -- container image the run will actually execute in (the CryoStack
+    #    tested image for this model; resolved here so the Review + CLOUD RUN
+    #    cards can show tag + digest, and the digest feeds the drift hash) --
+    image_key: str = ""
+    image_label: str = ""
+    image_reference: str = ""
+    image_digest: str = ""
+    image_public_url: str = ""
 
     # -- presentation ------------------------------------------------
     def resource_summary(self) -> str:
@@ -132,6 +140,11 @@ class CloudRunReview:
             "can_launch": self.can_launch,
             "blocked_reasons": list(self.blocked_reasons),
             "digest": self.digest,
+            "image_key": self.image_key,
+            "image_label": self.image_label,
+            "image_reference": self.image_reference,
+            "image_digest": self.image_digest,
+            "image_public_url": self.image_public_url,
         }
 
 
@@ -153,11 +166,14 @@ def review_digest(
     run_target: str,
     account_id: str,
     scientific_overrides: dict | None = None,
+    image_digest: str = "",
 ) -> str:
     """A short stable hash over the billable scientific + resource config.
 
     Any change -> a new digest -> the open review is invalidated and the user
-    must Review again before Launch.
+    must Review again before Launch. ``image_digest`` is included so that a
+    change to the tested container image (a new CryoStack default) also
+    invalidates an open review.
     """
     payload = {
         "model": (model or "").strip().lower(),
@@ -170,6 +186,7 @@ def review_digest(
         "time_limit_minutes": config.time_limit_minutes,
         "ephemeral_gib": config.ephemeral_gib,
         "job_definition": config.job_definition,
+        "image_digest": (image_digest or "").strip(),
         "scientific_overrides": _canonical(scientific_overrides or {}),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -241,9 +258,28 @@ def build_cloud_run_review(
         else:
             reasons.append(cleaned)
 
+    # the container image this run will actually execute in -- the CryoStack
+    # tested image for the model (what Prepare Cloud mirrored into ECR). A
+    # local, deterministic lookup: no AWS call, no dependency on the Batch
+    # job definition being described.
+    image_key = image_label = image_reference = image_digest = image_public_url = ""
+    try:
+        from cryostack_src.models.stack import default_tested_image_for_model
+
+        _img = default_tested_image_for_model(model)
+        if _img is not None:
+            image_key = _img.key
+            image_label = _img.label
+            image_reference = _img.reference
+            image_digest = _img.digest
+            image_public_url = _img.public_url or ""
+    except Exception:  # noqa: BLE001 - provenance display must never break Review
+        pass
+
     digest = review_digest(
         config=config, model=model, example=example, run_target=run_target,
         account_id=account_id, scientific_overrides=scientific_overrides,
+        image_digest=image_digest,
     )
 
     return CloudRunReview(
@@ -263,6 +299,11 @@ def build_cloud_run_review(
         blocked_reasons=reasons,
         digest=digest,
         config=config,
+        image_key=image_key,
+        image_label=image_label,
+        image_reference=image_reference,
+        image_digest=image_digest,
+        image_public_url=image_public_url,
     )
 
 

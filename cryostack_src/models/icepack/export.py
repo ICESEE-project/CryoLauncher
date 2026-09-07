@@ -19,17 +19,79 @@ from cryostack_src.models.icepack._export_core import (  # noqa: F401
 EXPORT_MODULE_NAME = "cryostack_icepack_export.py"
 RUNNER_MODULE_NAME = "cryostack_icepack_runner.py"
 
-#: the tiny runner written next to the export module. It runs the example
-#: script ONCE as ``__main__`` (its exceptions propagate -> the job fails) and
-#: then calls :func:`export` on the resulting namespace (wrapped -> non-fatal:
-#: a failed export never turns a good science run into a failed one).
+#: the tiny runner written next to the export module. It:
+#:  1. forces a headless Matplotlib backend (Agg) BEFORE the script imports
+#:     matplotlib -- the tutorials call plt.subplots()/tricontourf() and rely
+#:     on Jupyter's inline display, which does nothing in a plain script;
+#:  2. runs the example script ONCE as ``__main__`` (exceptions propagate ->
+#:     the job fails, as it must);
+#:  3. persists every still-open Matplotlib figure the script produced but
+#:     never saved, to ``outputs/figures/figure-NN.png`` -- deterministic,
+#:     de-duplicated against figures the script saved itself, and NEVER by
+#:     injecting savefig() into the science script;
+#:  4. runs :func:`export` on the resulting namespace (allow-list only,
+#:     never guesses a field).
+#: Steps 1, 3 and 4 are all non-fatal: a good science run is never turned
+#: into a failed one by figure capture or export.
 _RUNNER_SOURCE = '''# cryostack-icepack-runner (auto-generated -- do not edit)
+import os
 import runpy
 import sys
 
+os.environ.setdefault("MPLBACKEND", "Agg")
+try:
+    import matplotlib
+    matplotlib.use("Agg", force=True)
+except Exception:
+    pass
+
 script, run_dir = sys.argv[1], sys.argv[2]
+figures_dir = os.path.join(run_dir, "outputs", "figures")
+os.makedirs(figures_dir, exist_ok=True)
+
+# Note which figures the script saves itself, so the post-run sweep does not
+# emit a duplicate copy of the same figure under a generic name.
+_saved_fignums = set()
+_plt = None
+try:
+    import matplotlib.pyplot as _plt
+    _orig_savefig = _plt.Figure.savefig
+
+    def _tracking_savefig(self, *a, **k):
+        try:
+            _saved_fignums.add(self.number)
+        except Exception:
+            pass
+        return _orig_savefig(self, *a, **k)
+
+    _plt.Figure.savefig = _tracking_savefig
+except Exception:
+    _plt = None
+
 sys.path.insert(0, run_dir)
 _ns = runpy.run_path(script, run_name="__main__")   # science: errors propagate
+
+# Persist any still-open figures the script drew but never saved.
+try:
+    if _plt is not None:
+        _plt.Figure.savefig = _orig_savefig            # restore
+        _idx = 0
+        for _num in _plt.get_fignums():
+            if _num in _saved_fignums:
+                continue
+            _idx += 1
+            _out = os.path.join(figures_dir, "figure-%02d.png" % _idx)
+            try:
+                _plt.figure(_num).savefig(_out, dpi=120, bbox_inches="tight")
+            except Exception as _fe:
+                print("[cryostack][warn] figure capture failed:",
+                      type(_fe).__name__, _fe)
+        if _idx:
+            print("[cryostack] captured %d live matplotlib figure(s)" % _idx)
+except Exception as _err:
+    print("[cryostack][warn] matplotlib figure capture failed:",
+          type(_err).__name__, _err)
+
 try:
     import cryostack_icepack_export as _e
     _e.export(_ns, run_dir)
