@@ -207,3 +207,57 @@ def test_unknown_schema_version_still_rejected(tmp_path):
     }))
     with pytest.raises(ValueError):
         read_manifest(d / MANIFEST_NAME)
+
+
+# ── a cloud run manifest carries the full non-secret identity ────────────
+def test_cloud_run_manifest_round_trips_provider_and_experiment_identity(tmp_path):
+    """Phase 5: Runs / Files / Run Log / Results describe the SAME persisted
+    run -- so the manifest must carry, non-secret, everything the four tabs
+    and the history card show for a completed cloud run."""
+    ws = tmp_path / "cloud-run"
+    prov = resolve_stack(model="icepack", profile="tested", selections=None,
+                         container_source="docker", image_uri="",
+                         tested_image_key="icesee-combined-v1.0.1")
+    run = _run(
+        ws, id="cloud-1", name="cloud-1", model="icepack", backend="aws",
+        execution_mode="cloud", status="completed", jobid="1ebd6f32-0f69",
+        remote_directory=Path("s3://cryostack-runs-774888247882/runs/u/x"),
+        container=prov["container"], software=prov["software"],
+        metadata={
+            "provider": "aws", "region": "us-east-2",
+            "account_id": "774888247882",
+            "example": "00-meshes-functions",
+            "source": "00-meshes-functions.ipynb",
+            "run_target": "run.py",
+            "job_queue": "cryostack-queue", "job_definition": "cryostack-icepack",
+            "image_reference": "bkyanjo/icesee-combined:v1.0.1",
+            "image_digest": prov["container"]["digest"],
+            "aws_resources": {"job_id": "1ebd6f32-0f69", "region": "us-east-2",
+                              "log_group": "/aws/batch/job",
+                              "s3_run": "s3://cryostack-runs-774888247882/runs/u/x"},
+        },
+    )
+    write_manifest(run, ws)
+    back = read_manifest(ws / MANIFEST_NAME)
+
+    assert back.model == "icepack" and back.backend == "aws"
+    assert back.execution_mode == "cloud" and back.jobid == "1ebd6f32-0f69"
+    md = back.metadata
+    # experiment identity -- distinct source vs run target
+    assert md["example"] == "00-meshes-functions"
+    assert md["source"] == "00-meshes-functions.ipynb" and md["run_target"] == "run.py"
+    # provider identity
+    assert md["provider"] == "aws" and md["job_queue"] == "cryostack-queue"
+    # container identity: the reused schema, digest frozen
+    assert back.container["source"] == "docker"
+    assert back.container["digest"] == prov["container"]["digest"]
+    assert back.container["build_provenance"]["tested_image"] == "icesee-combined-v1.0.1"
+    assert back.software                                   # per-component provenance
+    # AWS diagnostics identity (non-secret) survives the round trip
+    assert md["aws_resources"]["job_id"] == "1ebd6f32-0f69"
+    # NEVER a secret / credential / ExternalId
+    blob = json.dumps({"metadata": md, "container": back.container,
+                       "software": back.software})
+    for forbidden in ("AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "ExternalId",
+                      "MLM_LICENSE_FILE=", "@matlablic"):
+        assert forbidden not in blob
