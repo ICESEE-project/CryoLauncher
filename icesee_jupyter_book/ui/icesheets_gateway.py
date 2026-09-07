@@ -774,6 +774,15 @@ def build_icesheets_ui():
         #: late-bound; assigned once the CloudRunController is built (below).
         _cloud = {"controller": None}
 
+        def _cloud_matlab_license_configured() -> bool:
+            """True when the connected BYO account has an ISSM cloud MATLAB
+            license mechanism configured (a Secrets Manager ARN). Non-secret;
+            the license value never reaches CryoStack. Fail closed."""
+            try:
+                return bool(_resolve_cloud_execution().matlab_license.configured)
+            except Exception:  # noqa: BLE001
+                return False
+
         def _default_tested_image(model: str):
             """The CryoStack tested container image for ``model`` (what Prepare
             Cloud mirrored into ECR). Deterministic; no AWS call."""
@@ -916,7 +925,7 @@ def build_icesheets_ui():
                     job_queue=batch_job_queue.value.strip(),
                     job_definition=_job_def,
                 )
-            _lic = get_compute_profile("aws").has_matlab_license
+            _lic = _cloud_matlab_license_configured()
             _problems = validate_cloud_config(_cfg, model=_model)
             _problems += cloud_run_preflight(
                 model=_model, matlab_license_configured=_lic
@@ -3129,7 +3138,7 @@ def build_icesheets_ui():
             # the MATLAB-license gate is ISSM-only (cloud_run_preflight skips
             # it for every other model) -- unchanged behaviour, just no
             # longer computed against a hardcoded "issm".
-            _lic = get_compute_profile("aws").has_matlab_license
+            _lic = _cloud_matlab_license_configured()
             return build_cloud_run_review(
                 config=cfg, model=_model, example=_cloud_example_name(),
                 run_target=(Path(run_target.value or "runme.m").name),
@@ -3140,6 +3149,7 @@ def build_icesheets_ui():
                 preflight_problems=cloud_run_preflight(
                     model=_model, matlab_license_configured=_lic),
                 scientific_overrides=(md_panel.overrides() if model_dd.value == "issm" else {}),
+                issm_runtime_ready=(_lic if _model == "issm" else None),
             )
 
         _cloud_review = build_cloud_review_callbacks(

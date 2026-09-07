@@ -56,6 +56,20 @@ _SECRET_TEXT_RE = re.compile(
 def _redact(text: str) -> str:
     return _SECRET_TEXT_RE.sub("<redacted>", text or "")
 
+
+def _issm_matlab_secrets(secret_arn: str) -> list[dict] | None:
+    """``containerProperties.secrets`` for the ISSM job definition from a
+    (non-secret) Secrets Manager ARN. ``None`` when unconfigured -- the
+    license value never passes through CryoStack."""
+    from cryostack_src.cloud.matlab_license import CloudMatlabLicense
+
+    arn = (secret_arn or "").strip()
+    if not arn:
+        return None
+    lic = CloudMatlabLicense(configured=True, mechanism="secrets-manager",
+                             secret_arn=arn)
+    return lic.batch_secrets_block() or None
+
 from .auth import (
     AWSCredentialsError,
     discover_account,
@@ -220,6 +234,7 @@ class AWSDriver(
         max_vcpus: int = DEFAULT_MAX_VCPUS,
         include_icepack: bool = False,
         image_copier=None,
+        matlab_secret_arn: str = "",
     ) -> AWSBatchProvisionResult:
         """
         Idempotently provision AWS Batch on Fargate: a scale-to-zero compute
@@ -288,6 +303,7 @@ class AWSDriver(
             issm_image=issm_image,
             max_vcpus=max_vcpus,
             job_command=cloud_run_command(),
+            issm_secrets=_issm_matlab_secrets(matlab_secret_arn),
             include_icepack=include_icepack,
             icepack_image=icepack_image,
         )
@@ -300,6 +316,7 @@ class AWSDriver(
         self,
         *,
         bucket: str | None = None,
+        matlab_secret_arn: str = "",
     ) -> dict:
         """
         Prepare the AWS environment currently supported by CryoStack.
@@ -456,6 +473,7 @@ class AWSDriver(
                 iam=iam,
                 registry=registry,
                 include_icepack=True,
+                matlab_secret_arn=matlab_secret_arn,
             )
 
         except AWSCredentialsError:

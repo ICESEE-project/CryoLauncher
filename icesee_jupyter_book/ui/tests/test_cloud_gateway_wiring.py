@@ -680,15 +680,11 @@ def test_issm_cloud_submit_never_gets_the_icepack_extra_file(monkeypatch, tmp_pa
     batch_job_queue.value = "cryostack-queue"
     batch_job_def.value = "cryostack-issm"
 
-    # ISSM's own preflight gate (MATLAB license) is unrelated to this
-    # checkpoint -- satisfy it so the test reaches the staging call at all.
-    class _LicensedProfile:
-        has_matlab_license = True
-
-    monkeypatch.setattr(
-        "icesee_jupyter_book.ui.icesheets_gateway.get_compute_profile",
-        lambda _name: _LicensedProfile(),
-    )
+    # ISSM's own preflight gate (a cloud MATLAB license -- an AWS Secrets
+    # Manager ARN on the connection) is unrelated to this checkpoint; stub
+    # the gateway's preflight so the test reaches the staging call at all.
+    import icesee_jupyter_book.ui.icesheets_gateway as _gw
+    monkeypatch.setattr(_gw, "cloud_run_preflight", lambda **kw: [])
 
     captured = {}
 

@@ -673,6 +673,19 @@ def set_review_panel(widgets: "CloudEnvironmentWidgets", review) -> None:
             f'<td><code style="font-size:10px;">{short or "—"}</code></td></tr>'
         )
 
+    # ISSM only: a distinct readiness row -- "container image ready" is NOT
+    # "ISSM runtime ready" (ISSM drives MATLAB, which needs a license
+    # reachable from AWS).
+    runtime_row = ""
+    _issm_ready = getattr(r, "issm_runtime_ready", None)
+    if _issm_ready is not None:
+        val = (_yn(True) if _issm_ready
+               else "<span style='color:#b23c3c;'>Needs a MATLAB license</span>")
+        runtime_row = (
+            '<tr><td style="padding:1px 12px 1px 0;">ISSM runtime</td>'
+            f'<td>{val}</td></tr>'
+        )
+
     widgets.review_body.value = f"""
       <table style="font-size:11px;color:#66758d;border-collapse:collapse;width:100%;">
         <tr><td colspan="2" style="padding-top:4px;font-weight:700;color:#172033;">Experiment</td></tr>
@@ -695,8 +708,9 @@ def set_review_panel(widgets: "CloudEnvironmentWidgets", review) -> None:
         <tr><td colspan="2" style="padding-top:6px;font-weight:700;color:#172033;">Infrastructure</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Account</td><td>{_yn(infra.account)}</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Storage</td><td>{_yn(infra.storage)}</td></tr>
-        <tr><td style="padding:1px 12px 1px 0;">Container</td><td>{_yn(infra.container)}</td></tr>
-        <tr><td style="padding:1px 12px 1px 0;">Compute</td><td>{_yn(infra.compute)}</td></tr>
+        <tr><td style="padding:1px 12px 1px 0;">Container image</td><td>{_yn(infra.container)}</td></tr>
+        <tr><td style="padding:1px 12px 1px 0;">Compute (AWS Batch)</td><td>{_yn(infra.compute)}</td></tr>
+        {runtime_row}
       </table>
       {blocked}
     """

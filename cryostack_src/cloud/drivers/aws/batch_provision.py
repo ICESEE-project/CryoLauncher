@@ -377,12 +377,13 @@ def ensure_job_definition(
     region: str,
     job_config: FargateJobConfig = DEFAULT_ISSM_JOB_CONFIG,
     command: list[str] | None = None,
+    secrets: list[dict] | None = None,
 ) -> str:
     name = job_definition_name(model)
     desired_cp = container_properties_payload(
         model=model, image=image, job_role_arn=job_role_arn,
         execution_role_arn=execution_role_arn, region=region, config=job_config,
-        command=command,
+        command=command, secrets=secrets,
     )
     desired_fp = job_definition_fingerprint(
         container_properties=desired_cp,
@@ -433,6 +434,7 @@ def ensure_batch_resources(
     max_vcpus: int = DEFAULT_MAX_VCPUS,
     issm_job_config: FargateJobConfig = DEFAULT_ISSM_JOB_CONFIG,
     job_command: list[str] | None = None,
+    issm_secrets: list[dict] | None = None,
     include_icepack: bool = False,
     icepack_image: str | None = None,
     icepack_job_config: FargateJobConfig | None = None,
@@ -479,6 +481,7 @@ def ensure_batch_resources(
             config, model="issm", image=issm_image, job_role_arn=job_role_arn,
             execution_role_arn=execution_role_arn, region=config.region,
             job_config=issm_job_config, command=job_command,
+            secrets=issm_secrets,   # ISSM MATLAB license (Secrets Manager ARN)
         ))
     else:
         result.skipped.append(

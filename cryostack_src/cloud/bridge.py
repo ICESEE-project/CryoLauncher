@@ -80,11 +80,13 @@ class CloudBridge:
             credentials=self.credentials,
         )
 
-    def prepare_environment(self, *, bucket: str | None = None):
+    def prepare_environment(self, *, bucket: str | None = None,
+                            matlab_secret_arn: str = ""):
         return self.manager.bootstrap(
             provider=self.provider,
             region=self.region,
             profile=self.profile,
             credentials=self.credentials,
             bucket=bucket,
+            matlab_secret_arn=matlab_secret_arn,
         )

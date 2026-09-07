@@ -33,9 +33,11 @@ from __future__ import annotations
 from .runtime import SUPPORTED_CLOUD_MODELS
 
 _NO_MATLAB_LICENSE = (
-    "[cloud][ERROR] MATLAB licensing is not configured for this compute "
-    "resource. ISSM cloud execution is blocked until a cloud compute profile "
-    "supplies a reachable license mechanism."
+    "[cloud][ERROR] ISSM cloud execution needs a MATLAB license reachable "
+    "from AWS. The container image is ready, but ISSM runtime is not: add an "
+    "AWS Secrets Manager secret (MLM_LICENSE_FILE value) in your AWS account "
+    "and give CryoStack its ARN in Cloud Environment. The license value "
+    "never leaves your account."
 )
 
 

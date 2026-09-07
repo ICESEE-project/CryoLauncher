@@ -137,7 +137,8 @@ def test_blocked_review_disables_launch_and_explains_why(card):
     cbs.review()
     spawn.run()
     assert card.launch_button.disabled
-    assert "MATLAB license that is reachable from AWS" in card.review_body.value
+    assert "MATLAB license reachable from AWS" in card.review_body.value
+    assert "ISSM runtime" in card.review_body.value          # distinct readiness row
 
 
 def test_back_hides_the_panel(card):

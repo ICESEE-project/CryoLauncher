@@ -78,6 +78,21 @@ class CloudExecution:
     def is_byo(self) -> bool:
         return self.mode == MODE_BYO
 
+    @property
+    def matlab_license(self):
+        """ISSM cloud-runtime MATLAB-license state for this connection
+        (:class:`cryostack_src.cloud.matlab_license.CloudMatlabLicense`).
+        Non-secret: only whether it is configured + the Secrets Manager ARN.
+        ``NOT_CONFIGURED`` in developer mode / no connection."""
+        from cryostack_src.cloud.matlab_license import (
+            NOT_CONFIGURED,
+            resolve_cloud_matlab_license,
+        )
+
+        if self.connection is None:
+            return NOT_CONFIGURED
+        return resolve_cloud_matlab_license(self.connection)
+
     def bucket(self, *, developer_fallback: str = "") -> str:
         """The S3 runs bucket for this operation.
 

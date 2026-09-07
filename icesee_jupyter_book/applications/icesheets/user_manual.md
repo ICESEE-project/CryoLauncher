@@ -627,6 +627,23 @@ Some backends need a one-time setup on the remote resource:
   MATLAB license is a property of the compute resource, injected at run time.
   If the selected resource has no license configured, the run fails fast with
   a clear message before MATLAB is launched.
+  - **Remote:** the license is the compute-resource profile's network
+    license server (`MLM_LICENSE_FILE=<port>@<host>`), passed to the
+    container with `apptainer exec --env`. It is never logged or persisted.
+  - **Cloud (AWS Batch):** "Container image ready" is **not** "ISSM runtime
+    ready". The tested image ships no license and a campus license server is
+    not reachable from AWS Fargate. You supply a cloud-reachable mechanism
+    by creating an **AWS Secrets Manager** secret *in your own AWS account*
+    whose value is the `MLM_LICENSE_FILE` string (a license server you can
+    reach from the Batch VPC, or a MathWorks online-licensing token), and
+    giving CryoStack only that secret's **ARN**. Prepare Cloud then wires the
+    ARN into the ISSM job definition (`containerProperties.secrets`) and AWS
+    Batch injects the value when the container starts. The license value
+    never reaches CryoStack, Git, the image, an S3 run artifact, a run
+    manifest, a command preview, or a log — only the (non-secret) ARN is
+    stored, on your AWS connection. The Review card shows an explicit **ISSM
+    runtime** row (Ready / *Needs a MATLAB license*) distinct from the
+    container row.
 
 ### Launching
 

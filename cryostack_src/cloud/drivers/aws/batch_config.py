@@ -170,14 +170,21 @@ def container_properties_payload(
     region: str,
     config: FargateJobConfig = DEFAULT_ISSM_JOB_CONFIG,
     command: list[str] | None = None,
+    secrets: list[dict] | None = None,
 ) -> dict:
-    """``containerProperties`` for a Fargate CryoStack job definition."""
+    """``containerProperties`` for a Fargate CryoStack job definition.
+
+    ``secrets`` (``[{"name","valueFrom"}]``) is passed straight through to
+    ``containerProperties.secrets`` -- used for the ISSM MATLAB license
+    (a Secrets Manager ARN in the user's own account; AWS Batch injects the
+    value at launch). It is a list of ARN REFERENCES, never a value.
+    """
     validate_fargate_job_config(config)
     if not image:
         raise ValueError("a job definition needs a container image reference")
     if not (job_role_arn and execution_role_arn):
         raise ValueError("job definition needs both a job role and an execution role")
-    return {
+    payload = {
         "image": image,
         # Commit 3 replaces this with the generic cloud runner entrypoint.
         "command": list(command or ["cryostack-run"]),
@@ -203,6 +210,21 @@ def container_properties_payload(
             },
         },
     }
+    clean_secrets = [
+        {"name": str(s["name"]), "valueFrom": str(s["valueFrom"])}
+        for s in (secrets or [])
+        if isinstance(s, dict) and s.get("name") and s.get("valueFrom")
+    ]
+    if clean_secrets:
+        # ARN references only -- fail closed if a raw value slipped through.
+        for s in clean_secrets:
+            if not s["valueFrom"].startswith("arn:aws:"):
+                raise ValueError(
+                    "containerProperties.secrets[].valueFrom must be an ARN, "
+                    "never a value"
+                )
+        payload["secrets"] = clean_secrets
+    return payload
 
 
 def job_definition_fingerprint(
@@ -228,6 +250,11 @@ def job_definition_fingerprint(
         "platformVersion": (cp.get("fargatePlatformConfiguration") or {}).get("platformVersion"),
         "logDriver": (cp.get("logConfiguration") or {}).get("logDriver"),
         "logGroup": ((cp.get("logConfiguration") or {}).get("options") or {}).get("awslogs-group"),
+        # secret ARN references only -- a change here (e.g. a MATLAB license
+        # secret added/removed) re-registers the job definition
+        "secrets": sorted(
+            (s.get("name"), s.get("valueFrom")) for s in cp.get("secrets", [])
+        ),
         "timeoutSeconds": int(timeout_seconds),
         "attempts": int(attempts),
     }

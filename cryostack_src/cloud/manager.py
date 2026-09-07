@@ -206,6 +206,7 @@ class CloudManager:
         profile: str | None = None,
         credentials: dict[str, str] | None = None,
         bucket: str | None = None,
+        matlab_secret_arn: str = "",
     ):
 
         return self.driver(
@@ -215,6 +216,7 @@ class CloudManager:
             credentials=credentials,
         ).bootstrap(
             bucket=bucket,
+            matlab_secret_arn=matlab_secret_arn,
         )
 
     def prepare_batch(

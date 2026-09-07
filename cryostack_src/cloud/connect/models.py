@@ -77,6 +77,14 @@ class AWSConnection:
     status_reason: str = ""
     created_at: str = field(default_factory=utc_now_iso)
     verified_at: str = ""
+    #: NON-SECRET: an AWS Secrets Manager secret ARN in the user's OWN account
+    #: whose value is the ISSM MATLAB license (``MLM_LICENSE_FILE``, a
+    #: ``<port>@<host>`` string). CryoStack stores only the ARN; the value
+    #: never touches CryoStack, git, the image, S3, manifests, logs, or a
+    #: command preview -- AWS Batch injects it into the container at launch
+    #: (containerProperties.secrets). Empty = ISSM cloud runtime not
+    #: configured. See cryostack_src/cloud/matlab_license.py.
+    matlab_license_secret_arn: str = ""
 
     # -- derived -----------------------------------------------------------
     @property
@@ -90,6 +98,11 @@ class AWSConnection:
     # -- transitions (return a new record; never mutate in place) ---------
     def with_role(self, role_arn: str) -> "AWSConnection":
         return replace(self, role_arn=(role_arn or "").strip())
+
+    def with_matlab_license_secret(self, secret_arn: str) -> "AWSConnection":
+        """Record the (non-secret) Secrets Manager ARN for the ISSM MATLAB
+        license. ``""`` clears it. The secret VALUE is never handled here."""
+        return replace(self, matlab_license_secret_arn=(secret_arn or "").strip())
 
     def mark_connected(self, *, account_id: str) -> "AWSConnection":
         return replace(
@@ -136,6 +149,9 @@ class AWSConnection:
                 "external_id": self.external_id,
                 "status_reason": self.status_reason,
                 "created_at": self.created_at,
+                # non-secret ARN only (the license value lives in the user's
+                # own Secrets Manager and never reaches CryoStack)
+                "matlab_license_secret_arn": self.matlab_license_secret_arn,
             }
         )
         return base

@@ -79,7 +79,8 @@ def test_issm_without_cloud_matlab_license_is_blocked_honestly():
         "profile ('aws'). ISSM needs a MATLAB license."
     ])
     assert not r.can_launch
-    assert any("MATLAB license that is reachable from AWS" in x for x in r.blocked_reasons)
+    assert any("MATLAB license reachable from AWS" in x for x in r.blocked_reasons)
+    assert r.issm_runtime_ready is False        # distinct readiness signal
 
 
 def test_unsupported_model_is_blocked():

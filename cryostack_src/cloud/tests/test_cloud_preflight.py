@@ -19,7 +19,8 @@ from cryostack_src.cloud.runtime import CloudRuntimeError
 
 def test_issm_without_a_cloud_matlab_license_is_blocked():
     reasons = cloud_run_preflight(model="issm", matlab_license_configured=False)
-    assert reasons and "MATLAB licensing is not configured" in reasons[0]
+    assert reasons and "MATLAB license reachable from AWS" in reasons[0]
+    assert "Secrets Manager" in reasons[0]
     with pytest.raises(CloudRuntimeError):
         assert_cloud_run_allowed(model="issm", matlab_license_configured=False)
 

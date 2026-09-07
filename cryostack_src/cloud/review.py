@@ -103,6 +103,9 @@ class CloudRunReview:
     image_reference: str = ""
     image_digest: str = ""
     image_public_url: str = ""
+    #: ISSM only: whether ISSM RUNTIME (MATLAB license) is ready -- distinct
+    #: from container readiness. ``None`` for non-ISSM runs.
+    issm_runtime_ready: bool | None = None
 
     # -- presentation ------------------------------------------------
     def resource_summary(self) -> str:
@@ -145,6 +148,7 @@ class CloudRunReview:
             "image_reference": self.image_reference,
             "image_digest": self.image_digest,
             "image_public_url": self.image_public_url,
+            "issm_runtime_ready": self.issm_runtime_ready,
         }
 
 
@@ -219,6 +223,7 @@ def build_cloud_run_review(
     config_problems: list[str] | None = None,
     preflight_problems: list[str] | None = None,
     scientific_overrides: dict | None = None,
+    issm_runtime_ready: bool | None = None,
 ) -> CloudRunReview:
     """Assemble a review and decide whether Launch is allowed.
 
@@ -252,11 +257,20 @@ def build_cloud_run_review(
         cleaned = problem.replace("[cloud][ERROR] ", "").strip()
         if "MATLAB" in cleaned or "matlab" in cleaned:
             reasons.append(
-                "Cloud infrastructure is ready, but ISSM execution requires a "
-                "MATLAB license that is reachable from AWS."
+                "The container image is ready, but ISSM runtime is not: it "
+                "needs a MATLAB license reachable from AWS (an AWS Secrets "
+                "Manager secret ARN, configured on your AWS connection)."
             )
         else:
             reasons.append(cleaned)
+
+    # first-class, distinct readiness signal: for ISSM, "container ready" is
+    # NOT "ISSM runtime ready". None => not applicable (non-ISSM, or the
+    # caller did not supply it).
+    _model_l = (model or "").strip().lower()
+    if issm_runtime_ready is None and _model_l == "issm":
+        issm_runtime_ready = not any(
+            "MATLAB" in r or "matlab" in r for r in reasons)
 
     # the container image this run will actually execute in -- the CryoStack
     # tested image for the model (what Prepare Cloud mirrored into ECR). A
@@ -304,6 +318,7 @@ def build_cloud_run_review(
         image_reference=image_reference,
         image_digest=image_digest,
         image_public_url=image_public_url,
+        issm_runtime_ready=issm_runtime_ready,
     )
 
 

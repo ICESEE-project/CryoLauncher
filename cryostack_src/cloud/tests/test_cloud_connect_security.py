@@ -62,11 +62,18 @@ def test_assert_no_aws_secrets_fails_closed_on_a_persist_attempt():
 def test_connection_record_can_never_carry_a_secret_field():
     conn = AWSConnection(connection_id="c1", external_id="e1", region="us-east-2")
     assert_no_aws_secrets(conn.to_dict(), context="connection")  # must not raise
-    # there is simply no field to hold one
+    # no field holds a secret VALUE. matlab_license_secret_arn is an
+    # explicit exception: it holds an AWS Secrets Manager *ARN* (a
+    # non-secret identifier -- the license value stays in the user's
+    # own account and never reaches CryoStack).
+    _ok = {"matlab_license_secret_arn"}
     assert not any(
-        "secret" in f.lower() or "token" in f.lower()
+        ("secret" in f.lower() or "token" in f.lower()) and f not in _ok
         for f in AWSConnection.__dataclass_fields__
     )
+    conn2 = conn.with_matlab_license_secret(
+        "arn:aws:secretsmanager:us-east-2:123456789012:secret:x-AbCdEf")
+    assert_no_aws_secrets(conn2.to_dict(), context="connection")  # ARN is not a secret
 
 
 def test_context_does_not_serialise_and_repr_is_redacted():

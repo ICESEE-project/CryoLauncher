@@ -407,7 +407,21 @@ def build_cloud_runtime_callbacks(
             bucket = ex.bucket(developer_fallback=(bucket_value() or ""))
         else:
             bucket = bucket_value()
-        return bridge.prepare_environment(bucket=bucket or None)
+        # non-secret Secrets Manager ARN only (the ISSM MATLAB license value
+        # lives in the user's own account; Prepare Cloud wires it into the
+        # ISSM job definition's containerProperties.secrets). Only pass the
+        # kwarg when one is actually configured -- keeps the call identical
+        # to before for the common (no cloud MATLAB license) case.
+        _matlab_arn = ""
+        try:
+            _lic = getattr(ex, "matlab_license", None)
+            _matlab_arn = (_lic.secret_arn if _lic and _lic.configured else "")
+        except Exception:  # noqa: BLE001
+            _matlab_arn = ""
+        _kw = {"bucket": bucket or None}
+        if _matlab_arn:
+            _kw["matlab_secret_arn"] = _matlab_arn
+        return bridge.prepare_environment(**_kw)
 
     def _prepare_success(result) -> None:
         is_dict = isinstance(result, dict)
