@@ -234,6 +234,11 @@ class _RunHandle:
     #: the connected AWS account this run belongs to ("" = developer mode)
     account_id: str = ""
     example: str = ""
+    #: the executable run target actually submitted (e.g. run.py / runme.m)
+    run_target: str = ""
+    #: the canonical example SOURCE this run derives from (a notebook name
+    #: for a converted Icepack example; "" when source == run target)
+    source: str = ""
     #: canonical resource shape, for display only
     vcpu: float = 0.0
     memory_gib: float = 0.0
@@ -487,6 +492,8 @@ class CloudRunController:
             metadata=dict(submit_kwargs.pop("_md_provenance", None) or {}),
             account_id=(submit_kwargs.pop("_account_id", "") or "").strip(),
             example=(submit_kwargs.pop("_example", "") or "").strip(),
+            run_target=(submit_kwargs.get("run_target") or "").strip(),
+            source=(submit_kwargs.pop("_source", "") or "").strip(),
             vcpu=float(submit_kwargs.pop("_vcpu", 0) or 0),
             memory_gib=float(submit_kwargs.pop("_memory_gib", 0) or 0),
             expected_runtime_minutes=float(
@@ -681,6 +688,7 @@ class CloudRunController:
     def attach(self, *, job_id: str, s3_run: str, model: str = "",
                region: str = "", profile: str | None = None,
                account_id: str = "", example: str = "",
+               run_target: str = "", source: str = "",
                vcpu: float = 0.0, memory_gib: float = 0.0,
                expected_runtime_minutes: float = 0.0, cost_public: dict | None = None,
                image_key: str = "", image_label: str = "",
@@ -701,6 +709,7 @@ class CloudRunController:
             job_id=str(job_id), s3_run=str(s3_run), model=model,
             region=region, profile=profile, state=state,
             account_id=(account_id or "").strip(), example=example,
+            run_target=(run_target or "").strip(), source=(source or "").strip(),
             vcpu=float(vcpu or 0), memory_gib=float(memory_gib or 0),
             expected_runtime_minutes=float(expected_runtime_minutes or 0),
             cost_public=dict(cost_public or {}),

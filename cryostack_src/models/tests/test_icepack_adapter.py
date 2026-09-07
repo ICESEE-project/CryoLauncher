@@ -72,10 +72,13 @@ def test_order_run_targets_puts_run_py_first_even_over_a_notebook():
 
 # ── run-command shapes (spack + apptainer) ───────────────────────────
 @pytest.mark.parametrize("backend,target,must_contain,must_not", [
-    ("spack", "sim.py", 'python "sim.py"', "apptainer"),
+    # an Icepack run goes through the shared runner (headless + figure
+    # capture + structured export), never a bare `python <script>`
+    ("spack", "sim.py", 'cryostack_icepack_runner.py" "sim.py"', "apptainer"),
     ("spack", "nb.ipynb", "nbconvert --to script", "matlab"),
     ("spack", "", 'import icepack', "matlab"),
-    ("container", "sim.py", 'with-icepack python "sim.py"', "with-issm"),
+    ("container", "sim.py", 'with-icepack bash -lc', "with-issm"),
+    ("container", "sim.py", 'cryostack_icepack_runner.py" "sim.py"', "with-issm"),
     ("container", "nb.ipynb", "with-icepack bash -lc", "matlab"),
 ])
 def test_build_run_command(backend, target, must_contain, must_not):
@@ -85,6 +88,8 @@ def test_build_run_command(backend, target, must_contain, must_not):
     assert must_contain in cmd
     assert must_not not in cmd
     assert "matlab" not in cmd.lower()               # never MATLAB
+    # never a bare double execution
+    assert cmd.count("python ") <= 2                  # nbconvert + runner at most
 
 
 def test_activation_check_is_a_python_import():

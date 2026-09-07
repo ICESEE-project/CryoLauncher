@@ -853,6 +853,8 @@ def build_icesheets_ui():
                     # credentials are ever persisted.
                     "account_id": getattr(handle, "account_id", "") or "",
                     "example": getattr(handle, "example", "") or "",
+                    "run_target": getattr(handle, "run_target", "") or "",
+                    "source": getattr(handle, "source", "") or "",
                     "vcpu": getattr(handle, "vcpu", 0) or 0,
                     "memory_gib": getattr(handle, "memory_gib", 0) or 0,
                     "expected_runtime_minutes": getattr(
@@ -940,6 +942,11 @@ def build_icesheets_ui():
                 return None
 
             _target = (Path(run_target.value or "runme.m").name) or "runme.m"
+            # the canonical example SOURCE, recorded distinctly from the
+            # executable run target (a converted Icepack notebook: source is
+            # the .ipynb, run target is run.py). "" when they are the same.
+            _sel_path = Path(STATUS.get("selected_example_path") or example_dir.value or "")
+            _source = _sel_path.name if _sel_path.suffix.lower() == ".ipynb" else ""
 
             # cloud always uploads a user-owned working copy (parity with Remote)
             if str(staged_dir) == str(example_dir.value):
@@ -1018,6 +1025,7 @@ def build_icesheets_ui():
                 _region=_cfg.region,
                 _profile=_cfg.profile,
                 _md_provenance=md_provenance,
+                _source=_source,
                 **_submit_extra,
             )
             return None
@@ -3758,6 +3766,8 @@ def build_icesheets_ui():
                     profile=meta.get("profile"),
                     account_id=meta.get("account_id") or "",
                     example=meta.get("example") or "",
+                    run_target=meta.get("run_target") or "",
+                    source=meta.get("source") or "",
                     vcpu=meta.get("vcpu") or 0,
                     memory_gib=meta.get("memory_gib") or 0,
                     expected_runtime_minutes=meta.get("expected_runtime_minutes") or 0,

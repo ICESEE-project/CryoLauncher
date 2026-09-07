@@ -170,11 +170,24 @@ def build_workspace_history_panel(
         _mode_label = {
             "cloud": "Cloud", "remote": "Remote", "local": "Local",
         }.get((run.execution_mode or "").strip().lower(), run.execution_mode)
+        _md = run.metadata or {}
+        _example = _md.get("example") or ""
+        _rt = _md.get("run_target") or ""
+        _src = _md.get("source") or ""
+        _exp_rows = ""
+        if _example:
+            _exp_rows += f"<div><span>Example</span><b>{html.escape(str(_example))}</b></div>"
+        if _src and _src != _rt:
+            _exp_rows += (f"<div><span>Source</span><b>{html.escape(str(_src))}</b>"
+                          " <span class='icesee-subtle'>(converted)</span></div>")
+        if _rt:
+            _exp_rows += f"<div><span>Run target</span><b>{html.escape(str(_rt))}</b></div>"
         selected.value = (
             "<div class='cryostack-selected-run-card'>"
             f"<div><span>Model</span><b>{html.escape(run.model.upper())}</b></div>"
-            f"<div><span>Backend</span><b>{html.escape(_backend_label)}</b></div>"
-            f"<div><span>Execution</span><b>{html.escape(_mode_label)}</b></div>"
+            f"{_exp_rows}"
+            f"<div><span>Execution mode</span><b>{html.escape(_mode_label)}</b></div>"
+            f"<div><span>Compute backend</span><b>{html.escape(_backend_label)}</b></div>"
             f"<div><span>Job ID</span><b>{html.escape(str(run.jobid or '—'))}</b></div>"
             f"<div><span>Status</span>{status_badge(run.status)}</div>"
             "</div>"

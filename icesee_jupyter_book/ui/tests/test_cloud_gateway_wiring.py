@@ -798,6 +798,8 @@ def test_cloud_submit_freezes_the_container_image_into_run_provenance(monkeypatc
         region = "us-east-2"
         account_id = "774888247882"
         example = "00-meshes-functions"
+        run_target = "run.py"
+        source = "00-meshes-functions.ipynb"
         vcpu = 2
         memory_gib = 8
         expected_runtime_minutes = 5
@@ -817,6 +819,10 @@ def test_cloud_submit_freezes_the_container_image_into_run_provenance(monkeypatc
     assert md["image_reference"] == img.reference
     assert md["image_digest"] == img.digest
     assert md["image_key"] == img.key
+    # experiment identity persisted distinctly: example / source / run target
+    assert md["example"] == "00-meshes-functions"
+    assert md["source"] == "00-meshes-functions.ipynb"    # the .ipynb, not run.py
+    assert md["run_target"] == "run.py"                   # what AWS Batch executed
     # reused container/software provenance schema (not a cloud-only format)
     container = started["container"]
     assert container["source"] == "docker"

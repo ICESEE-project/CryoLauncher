@@ -242,4 +242,5 @@ def test_history_card_shows_aws_diagnostics_from_the_run_s_own_persisted_resourc
     assert "AWS diagnostics" in html
     assert "eu-west-1" in html and "old-job-xyz" in html
     assert "us-east-2" not in html                  # no leakage of a current default
-    assert "Backend</span><b>AWS Batch (Fargate)" in html
+    assert "Compute backend</span><b>AWS Batch (Fargate)" in html
+    assert "Execution mode</span><b>Cloud" in html

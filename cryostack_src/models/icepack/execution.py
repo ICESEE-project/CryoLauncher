@@ -19,19 +19,29 @@ def example_template():
 
 
 def build_run_command(*, backend, target, example_dir, exec_dir, image_uri, ntasks) -> str:
+    """A faithful ONE-LINE preview of what actually runs.
+
+    An Icepack run (Remote or Cloud) is a single step through the shared
+    runner (``cryostack_icepack_runner.py`` -- see
+    :mod:`cryostack_src.models.icepack.export`): headless Matplotlib, run the
+    script once, capture figures + metadata, structured-export. Only the
+    provider wrapper differs.
+    """
+    from .export import RUNNER_MODULE_NAME
+
+    _t = (target or "").strip()
+    if not _t or not _t.endswith((".py", ".ipynb")):
+        if backend == "spack":
+            return f'cd "{example_dir}" && python -c "import icepack"'
+        return f'apptainer exec "{image_uri}" with-icepack python -c "import icepack"'
+
+    py = Path(_t).with_suffix(".py").name if _t.endswith(".ipynb") else _t
+    nbconvert = (f'jupyter nbconvert --to script "{_t}" && '
+                 if _t.endswith(".ipynb") else "")
+    inner = f'{nbconvert}python "{RUNNER_MODULE_NAME}" "{py}" <run-dir>'
     if backend == "spack":
-        if target.endswith(".py"):
-            return f'cd "{example_dir}" && python "{target}"'
-        if target.endswith(".ipynb"):
-            python_name = Path(target).with_suffix(".py").name
-            return f'cd "{example_dir}" && jupyter nbconvert --to script "{target}" && python "{python_name}"'
-        return f'cd "{example_dir}" && python -c "import icepack"'
-    if target.endswith(".py"):
-        return f'apptainer exec "{image_uri}" with-icepack python "{target}"'
-    if target.endswith(".ipynb"):
-        python_name = Path(target).with_suffix(".py").name
-        return f'apptainer exec "{image_uri}" with-icepack bash -lc \'jupyter nbconvert --to script "{target}" && python "{python_name}"\''
-    return f'apptainer exec "{image_uri}" with-icepack python -c "import icepack"'
+        return f'cd "{example_dir}" && {inner}'
+    return f'apptainer exec "{image_uri}" with-icepack bash -lc \'cd "{example_dir}" && {inner}\''
 
 
 def build_activation_check() -> str:
