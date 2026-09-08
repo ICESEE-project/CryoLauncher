@@ -105,7 +105,7 @@ def test_cloud_submit_reaches_batch_submit_job_with_the_documented_env_vars(
 
     page = _build_gateway(monkeypatch, tmp_path, user="cloud-submit-user")
     _select_cloud_mode(page)
-    submit_btn = _find_button(page, "Submit")
+    submit_btn = _find_button(page, "Launch cloud run")
     assert submit_btn is not None
     click_handler = submit_btn._click_handlers.callbacks[0]
     handler = _freevar(click_handler, "run_example_cloud_submit")
@@ -225,7 +225,7 @@ def test_cloud_submit_and_status_populate_aws_resources_for_the_shared_diagnosti
     page = _build_gateway(monkeypatch, tmp_path, user="cloud-diagnostics-user")
     _select_cloud_mode(page)
 
-    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_click = _find_button(page, "Launch cloud run")._click_handlers.callbacks[0]
     submit_handler = _freevar(submit_click, "run_example_cloud_submit")
     aws_region = _freevar(submit_handler, "aws_region")
     cloud_bucket = _freevar(submit_handler, "cloud_bucket")
@@ -281,7 +281,7 @@ def test_cloud_submit_threads_mpi_ensemble_params_into_the_container_env(
 
     page = _build_gateway(monkeypatch, tmp_path, user="cloud-mpi-user")
     _select_cloud_mode(page)
-    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_click = _find_button(page, "Launch cloud run")._click_handlers.callbacks[0]
     submit_handler = _freevar(submit_click, "run_example_cloud_submit")
 
     aws_region = _freevar(submit_handler, "aws_region")

@@ -93,6 +93,18 @@ from cryostack_src.frontend.cryolauncher.workspace.run_history import (
 from cryostack_src.frontend.cryolauncher.workspace.run_details import build_run_details
 from cryostack_src.frontend.cryolauncher.workspace.explorer import build_workspace_explorer
 from cryostack_src.frontend.cryolauncher.workspace.toolbar import build_workspace_toolbar
+from cryostack_src.frontend.cryolauncher.cloud_environment import (
+    build_cloud_environment_card,
+    set_cloud_status,
+    set_run_estimate_view,
+)
+from cryostack_src.frontend.cryolauncher.cloud_connect_runtime import build_aws_connect_callbacks
+from cryostack_src.frontend.cryolauncher.cloud_runtime import build_cloud_environment_ops
+from cryostack_src.cloud.review import InfrastructureReadiness
+from icesee_jupyter_book.core.cloud_review import (
+    build_icesee_cloud_review,
+    render_icesee_review_panel,
+)
 
 from icesee_jupyter_book.ui.shared_ssh_widgets import build_ssh_key_manager
 
@@ -1279,17 +1291,32 @@ def build_icesee_ui():
                 cluster_password.value = ""     # never persisted/logged
 
         # =========================================================
-        # Cloud panel widgets (AWS Batch)
+        # Cloud panel -- the SAME shared Cloud Environment component
+        # CryoLauncher uses (Provider/Region, AWS ACCOUNT, INFRASTRUCTURE,
+        # Prepare Cloud, RUN ESTIMATE, Review & Launch, Advanced cloud
+        # settings), not an ICESEE imitation of it. Region/profile/bucket/
+        # queue/job-definition/job-name are ITS widgets (aliased below for
+        # the existing submit/status/terminate handlers, unchanged) -- the
+        # raw fields now live only under its own Advanced cloud settings
+        # disclosure, never as the primary Cloud UI.
         # =========================================================
-        aws_region = W.Text(value="us-east-1", layout=W.Layout(width="220px"))
-        aws_profile = W.Text(value="", placeholder="(optional) AWS profile", layout=W.Layout(width="220px"))
-        cloud_bucket = W.Text(value="", placeholder="s3://bucket/prefix", layout=W.Layout(width="320px"))
+        icesee_cloud_environment = build_cloud_environment_card(
+            region="us-east-1", profile="", s3_prefix="",
+            job_queue="", job_definition="", job_name="icesee",
+        )
+        aws_region = icesee_cloud_environment.region
+        aws_profile = icesee_cloud_environment.profile
+        cloud_bucket = icesee_cloud_environment.s3_prefix
+        batch_job_queue = icesee_cloud_environment.job_queue
+        batch_job_def = icesee_cloud_environment.job_definition
+        batch_job_name = icesee_cloud_environment.job_name
 
-        batch_job_queue = W.Text(value="", placeholder="AWS Batch job queue", layout=W.Layout(width="320px"))
-        batch_job_def = W.Text(value="", placeholder="job definition (name[:rev])", layout=W.Layout(width="320px"))
-        batch_job_name = W.Text(value="icesee", layout=W.Layout(width="220px"))
-
-        cloud_submit_btn = W.Button(description="Submit", icon="cloud-upload", button_style="warning")
+        # Status/Logs/Terminate for an in-flight job remain standalone --
+        # they live in the Workspace Run Log toolbar and the Execution
+        # panel (unchanged from the prior checkpoint), never inside the
+        # Cloud Environment card itself. There is no standalone cloud
+        # submit button any more: submission only happens through the
+        # shared card's own Review & Launch.
         cloud_status_btn = W.Button(description="Check status", icon="search", button_style="")
         cloud_logs_btn = W.Button(description="Logs hint", icon="file-text", button_style="")
         cloud_terminate_btn = W.Button(description="Terminate cloud job", icon="stop", button_style="danger")
@@ -2582,7 +2609,6 @@ def build_icesee_ui():
         tail_btn.on_click(lambda b: run_example_remote_tail())
         terminate_btn.on_click(lambda b: run_example_remote_cancel())
 
-        cloud_submit_btn.on_click(lambda b: run_example_cloud_submit())
         cloud_status_btn.on_click(lambda b: run_example_cloud_status())
         cloud_logs_btn.on_click(lambda b: run_example_cloud_logs_hint())
         cloud_terminate_btn.on_click(lambda b: run_example_cloud_terminate())
@@ -3028,27 +3054,177 @@ def build_icesee_ui():
             layout=W.Layout(gap="8px"),
         )
 
-        # Cloud panel -- Submit is this panel's own action (the same
-        # structural role CryoLauncher's cloud_environment "Launch cloud run"
-        # plays: mode-specific, not the generic Execution surface). Status/
+        # Cloud panel -- the shared Cloud Environment card itself. Status/
         # Logs live in the Workspace Run Log toolbar; Terminate lives in the
-        # Execution panel -- neither is duplicated here.
-        cloud_panel = W.VBox(
-            [
-                W.HTML("<div class='icesee-h'>Cloud</div>"),
-                W.HTML("<div class='icesee-subtle'>AWS Batch backend via AWS CLI.</div>"),
-                W.HBox([W.HTML("<div class='icesee-lbl'>Region:</div>"), aws_region, W.HTML("<div class='icesee-lbl'>Profile:</div>"), aws_profile],
-                    layout=W.Layout(gap="12px")),
-                W.HBox([W.HTML("<div class='icesee-lbl'>S3 prefix:</div>"), cloud_bucket], layout=W.Layout(gap="12px")),
-                W.HTML("<div class='icesee-subtle' style='margin-top:10px'>AWS Batch</div>"),
-                W.HBox([W.HTML("<div class='icesee-lbl'>Queue:</div>"), batch_job_queue], layout=W.Layout(gap="12px")),
-                W.HBox([W.HTML("<div class='icesee-lbl'>Job def:</div>"), batch_job_def], layout=W.Layout(gap="12px")),
-                W.HBox([W.HTML("<div class='icesee-lbl'>Job name:</div>"), batch_job_name], layout=W.Layout(gap="12px")),
-                W.HBox([cloud_submit_btn], layout=W.Layout(gap="10px")),
-            ],
-            layout=W.Layout(gap="8px"),
+        # Execution panel; Submit only happens through its own Review &
+        # Launch (wired below) -- neither is duplicated here.
+        cloud_panel = icesee_cloud_environment.container
+
+        # =========================================================
+        # AWS ACCOUNT -- the SAME generic onboarding callbacks CryoLauncher
+        # uses (connect / verify / re-check / disconnect / retry / change
+        # account), scoped to whichever CryoStack user is authenticated,
+        # not an ICESEE-only credential path.
+        # =========================================================
+        def _icesee_aws_onboarding_factory():
+            from cryostack_src.cloud.connect import AWSOnboarding
+            return AWSOnboarding(
+                user=resolve_workspace_user(require_authenticated=False),
+                region=(icesee_cloud_environment.region.value or "us-east-1").strip(),
+            )
+
+        icesee_aws_connect = build_aws_connect_callbacks(
+            widgets=icesee_cloud_environment,
+            onboarding_factory=_icesee_aws_onboarding_factory,
+            log_output=log_out,
         )
-        cloud_panel.add_class("icesee-card")
+        icesee_cloud_environment.connect_button.on_click(icesee_aws_connect.connect)
+        icesee_cloud_environment.verify_button.on_click(icesee_aws_connect.verify)
+        icesee_cloud_environment.recheck_button.on_click(icesee_aws_connect.recheck)
+        icesee_cloud_environment.disconnect_button.on_click(icesee_aws_connect.disconnect)
+        icesee_cloud_environment.retry_button.on_click(icesee_aws_connect.retry)
+        icesee_cloud_environment.change_account_button.on_click(icesee_aws_connect.change_account)
+        icesee_cloud_environment.change_verify_button.on_click(icesee_aws_connect.change_verify)
+        icesee_cloud_environment.change_cancel_button.on_click(icesee_aws_connect.change_cancel)
+        icesee_aws_connect.refresh()
+
+        # =========================================================
+        # INFRASTRUCTURE readiness + Prepare Cloud -- the SAME generic,
+        # non-blocking coordinator CryoLauncher uses
+        # (build_cloud_environment_ops); Test/Prepare never depend on a
+        # model, only on the connected account's own AWS capabilities.
+        # =========================================================
+        def _icesee_update_infrastructure_rows(capabilities):
+            rows = {
+                "account": icesee_cloud_environment.account_status,
+                "storage": icesee_cloud_environment.storage_status,
+                "registry": icesee_cloud_environment.registry_status,
+                "compute": icesee_cloud_environment.compute_status,
+            }
+            for key, ready, ready_label, missing_label in (
+                ("account", getattr(capabilities, "authenticated", False), "Connected", "Not connected"),
+                ("storage", getattr(capabilities, "storage_ready", False), "Ready", "Not prepared"),
+                ("registry", getattr(capabilities, "registry_ready", False), "Ready", "Not prepared"),
+                ("compute", getattr(capabilities, "batch_ready", False), "Ready", "Not prepared"),
+            ):
+                set_cloud_status(rows[key], state="done" if ready else "fail",
+                                 label=ready_label if ready else missing_label)
+
+        def _icesee_cloud_check_worker():
+            execution = _resolve_icesee_cloud_execution()
+            bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
+            return bridge.check_environment()
+
+        def _icesee_cloud_check_success(capabilities):
+            _icesee_update_infrastructure_rows(capabilities)
+            with log_out:
+                print("[cloud] Environment check")
+                for m in (getattr(capabilities, "messages", None) or []):
+                    print(" ", m)
+
+        def _icesee_cloud_prepare_worker():
+            execution = _resolve_icesee_cloud_execution()
+            bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
+            bucket = execution.defaults.bucket if (execution.is_byo and execution.defaults) else None
+            return bridge.prepare_environment(bucket=bucket)
+
+        def _icesee_cloud_prepare_success(result):
+            with log_out:
+                print("[cloud] Prepare cloud")
+                for m in ((result or {}).get("messages") if isinstance(result, dict) else None) or []:
+                    print(" ", m)
+            # re-check to reflect the REAL post-prepare state -- never
+            # hardcode Ready just because Prepare ran without raising.
+            try:
+                _icesee_update_infrastructure_rows(_icesee_cloud_check_worker())
+            except Exception:
+                pass
+
+        icesee_cloud_ops = build_cloud_environment_ops(
+            buttons={"test": icesee_cloud_environment.test_button,
+                     "prepare": icesee_cloud_environment.prepare_button},
+            rows={"account": icesee_cloud_environment.account_status,
+                  "storage": icesee_cloud_environment.storage_status,
+                  "registry": icesee_cloud_environment.registry_status,
+                  "compute": icesee_cloud_environment.compute_status},
+            set_row=set_cloud_status,
+            set_chip=lambda _k: None,
+            log_output=log_out,
+        )
+        icesee_cloud_environment.test_button.on_click(
+            lambda _=None: icesee_cloud_ops.test_connection(
+                _icesee_cloud_check_worker, _icesee_cloud_check_success))
+        icesee_cloud_environment.prepare_button.on_click(
+            lambda _=None: icesee_cloud_ops.prepare_cloud(
+                _icesee_cloud_prepare_worker, _icesee_cloud_prepare_success))
+
+        # =========================================================
+        # RUN ESTIMATE / Review & Launch -- ICESEE's OWN DA-aware review
+        # (icesee_jupyter_book/core/cloud_review.py), rendered into the SAME
+        # shared review_body/launch_button widgets, never CryoLauncher's
+        # model/example/run_target review schema. The estimate line is
+        # shown unconditionally (cost unavailable -- ICESEE has no Fargate
+        # cost model) purely so Review & Launch itself is reachable; Launch
+        # is gated inside the review, not by this line.
+        # =========================================================
+        set_run_estimate_view(icesee_cloud_environment, visible=True, unavailable=True)
+        icesee_cloud_environment.run_estimate_line.value = (
+            "<div style='font-size:11px;color:#96a1b4;'>Review the run before launching.</div>"
+        )
+
+        _icesee_review_state = {"review": None}
+
+        def _icesee_build_review():
+            sync_quick_into_widgets()
+            cfg_yaml = build_config_from_widgets()
+            identity = da_identity_from_params(cfg_yaml)
+
+            execution = _resolve_icesee_cloud_execution()
+            bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
+            try:
+                caps = bridge.check_environment()
+            except Exception:
+                caps = None
+            infra = InfrastructureReadiness(
+                account=bool(getattr(caps, "authenticated", False)) and execution.is_byo,
+                storage=bool(getattr(caps, "storage_ready", False)),
+                container=bool(getattr(caps, "registry_ready", False)),
+                compute=bool(getattr(caps, "batch_ready", False)),
+            )
+            return build_icesee_cloud_review(
+                forecast_model=(identity.forecast_model or identity.example_name
+                                or example_dd.value),
+                filter_alg=identity.assimilation_filter or filter_alg_dd.value,
+                ensemble_size=int(identity.ensemble_size or ens_sl.value),
+                parallel_processes=int(cluster_mpi_np.value),
+                account_id=execution.account_id, region=execution.region,
+                infrastructure=infra, account_freshly_verified=execution.is_byo,
+            )
+
+        def _on_icesee_review_click(_=None):
+            try:
+                review = _icesee_build_review()
+            except Exception as e:
+                with log_out:
+                    print("[cloud][ERROR] could not build the review:", type(e).__name__, e)
+                return
+            _icesee_review_state["review"] = review
+            render_icesee_review_panel(icesee_cloud_environment, review)
+            icesee_cloud_environment.review_panel.layout.display = "flex"
+
+        def _on_icesee_review_back(_=None):
+            icesee_cloud_environment.review_panel.layout.display = "none"
+
+        def _on_icesee_launch_click(_=None):
+            review = _icesee_review_state.get("review")
+            if review is None or not review.can_launch:
+                return
+            icesee_cloud_environment.review_panel.layout.display = "none"
+            run_example_cloud_submit()
+
+        icesee_cloud_environment.review_button.on_click(_on_icesee_review_click)
+        icesee_cloud_environment.review_back_button.on_click(_on_icesee_review_back)
+        icesee_cloud_environment.launch_button.on_click(_on_icesee_launch_click)
 
         mode_tabs.children = [local_tab_card, remote_box, cloud_panel]
         mode_tabs.set_title(0, "Local")
@@ -3077,17 +3253,16 @@ def build_icesee_ui():
             terminate_btn.layout.display = "" if is_remote else "none"
 
             is_cloud = (mode == MODE_CLOUD)
-            cloud_submit_btn.disabled = not is_cloud
             cloud_status_btn.disabled = not is_cloud
             cloud_logs_btn.disabled = not is_cloud
             cloud_terminate_btn.disabled = not is_cloud
             cloud_terminate_btn.layout.display = "" if is_cloud else "none"
 
-            # Cloud has its own dedicated Submit (cloud_submit_btn, inside the
-            # Cloud panel) -- the generic Execution Run button is hidden for
-            # Cloud, the same rule CryoLauncher's run_btn follows for its own
-            # cloud path (a lesson from a real live-acceptance bug: two submit
-            # surfaces for the same job).
+            # Cloud submission only happens through Review & Launch (inside
+            # the Cloud Environment card) -- the generic Execution Run
+            # button is hidden for Cloud, the same rule CryoLauncher's
+            # run_btn follows for its own cloud path (a lesson from a real
+            # live-acceptance bug: two submit surfaces for the same job).
             action_btn.layout.display = "none" if is_cloud else ""
 
             if is_remote:

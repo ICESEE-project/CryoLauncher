@@ -155,7 +155,7 @@ def test_byo_submit_uses_connected_account_credentials_and_prepared_defaults(
 
     page = _build_gateway(monkeypatch, tmp_path, user="byo-submit-user")
     _select_cloud_mode(page)
-    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_click = _find_button(page, "Launch cloud run")._click_handlers.callbacks[0]
     submit_handler = _freevar(submit_click, "run_example_cloud_submit")
 
     # deliberately leave bucket/queue/job-definition BLANK
@@ -194,7 +194,7 @@ def test_developer_mode_still_requires_explicit_fields_unchanged(monkeypatch, tm
     exactly like before BYO-AWS resolution was wired in."""
     page = _build_gateway(monkeypatch, tmp_path, user="dev-mode-unchanged-user")
     _select_cloud_mode(page)
-    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_click = _find_button(page, "Launch cloud run")._click_handlers.callbacks[0]
     submit_handler = _freevar(submit_click, "run_example_cloud_submit")
 
     capsys.readouterr()
@@ -216,7 +216,7 @@ def test_status_and_terminate_use_the_runs_own_persisted_region_not_the_live_wid
 
     page = _build_gateway(monkeypatch, tmp_path, user="region-pin-user")
     _select_cloud_mode(page)
-    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_click = _find_button(page, "Launch cloud run")._click_handlers.callbacks[0]
     submit_handler = _freevar(submit_click, "run_example_cloud_submit")
 
     aws_region = _freevar(submit_handler, "aws_region")
