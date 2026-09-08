@@ -5,6 +5,7 @@ chapters:
   - file: documentation
   - file: resources
   - file: about
+  - file: docs/hpc_cloud
   - file: docs/developer_guide
     sections:
       - file: docs/building_agents

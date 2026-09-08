@@ -249,11 +249,14 @@
       </div>
 
       <div>
-        <h3>Cloud <span class="cryostack-status dev">In development</span></h3>
+        <h3>Cloud <span class="cryostack-status dev">In validation</span></h3>
         <p>
-          AWS Batch execution. Infrastructure provisioning and the run
-          contract exist; real cloud scientific execution has not been
-          accepted yet. Use Remote execution.
+          Bring-your-own AWS account, connected once through a CloudFormation
+          role and used with temporary credentials only. Infrastructure
+          provisioning (storage, container registry, AWS Batch) and the run
+          contract are wired for CryoLauncher and ICESEE; the full onboarding
+          and operational lifecycle is still being validated end-to-end —
+          see the <a href="docs/hpc_cloud.html">Cloud Run Guide</a>.
         </p>
       </div>
 
@@ -374,6 +377,8 @@
     <p>
       <a href="resources.html">Resources</a> — an ecosystem-wide index of
       applications, models, environments, datasets, and repositories.<br>
+      <a href="docs/hpc_cloud.html">Cloud Run Guide</a> — connecting your own
+      AWS account and launching, monitoring, and retrieving a cloud run.<br>
       <a href="applications/icesheets/user_manual.html#troubleshooting">Troubleshooting</a> —
       common CryoLauncher issues and fixes.<br>
       <a href="about.html#citation">Citation</a> and
@@ -383,7 +388,7 @@
 
     <div class="cryostack-docs-actions">
       <a class="cryostack-btn primary" href="#applications">Browse Applications</a>
-      <a class="cryostack-btn secondary" href="resources.html">View Resources</a>
+      <a class="cryostack-btn secondary" href="docs/hpc_cloud.html">Cloud Run Guide</a>
     </div>
 
   </section>

@@ -190,9 +190,9 @@
 
       <article class="cryostack-resource-card">
         <div class="cryostack-resource-tag">Execution</div>
-        <h3>Cloud <span class="cryostack-status dev">In development</span></h3>
-        <p>AWS Batch execution. Infrastructure exists; real execution not yet accepted.</p>
-        <a href="documentation.html#execution">Platform status &rarr;</a>
+        <h3>Cloud <span class="cryostack-status dev">In validation</span></h3>
+        <p>Bring-your-own AWS account via CloudFormation; infrastructure provisioning is wired, the full lifecycle is still being validated.</p>
+        <a href="docs/hpc_cloud.html">Cloud Run Guide &rarr;</a>
       </article>
 
       <article class="cryostack-resource-card">

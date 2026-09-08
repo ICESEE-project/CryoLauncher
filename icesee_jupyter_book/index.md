@@ -179,7 +179,7 @@
           href="/frozen-legacies/"
           data-requires-auth="false"
           > 
-          Explore Frozen Legacies (comming soon)
+          Open Frozen Legacies
         </a>
       </div>
 

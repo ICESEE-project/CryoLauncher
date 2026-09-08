@@ -161,17 +161,27 @@ ICESEE workflows may use Slurm or another scheduler depending on the connected c
 
 ### Cloud Mode
 
-Cloud mode connects ICESEE to configured cloud infrastructure.
+Cloud mode runs ICESEE on your own AWS account (bring-your-own-AWS) using the
+same infrastructure CryoLauncher's Cloud Environment panel provides:
 
-The available features depend on the CryoStack deployment and may include:
+- **Connect AWS Account** once, through a CloudFormation role your own AWS
+  console creates (CryoStack never asks for an access key or secret);
+- **Prepare cloud**, which provisions S3 storage, an ECR repository, and an
+  AWS Batch job definition for ICESEE in your account, reusing what already
+  exists;
+- **Review & Launch**, which shows the run's forecast model, filter, ensemble
+  size, and process count, and only enables **Launch cloud run** when the
+  configuration is inside CryoStack's verified runtime contract;
+- live status, log, and result retrieval once a run is submitted.
 
-- object storage,
-- containerized execution,
-- managed batch systems,
-- configurable compute instances,
-- and automated result retrieval.
-
-Cloud support may vary between installations.
+Today that verified contract covers exactly one configuration: the
+**Lorenz-96** example at a single process (**Processes = 1**). Selecting a
+different example, or more than one process, is refused at Review — not
+silently coerced — because it has not been run end-to-end against the
+current container image. See the full
+[Cloud Run Guide](https://cryostack.eas.gatech.edu/docs/hpc_cloud.html) for
+the complete walkthrough, the reasoning behind that limit, and the current
+onboarding status.
 
 ## Example Selection
 

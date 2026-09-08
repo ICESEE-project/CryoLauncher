@@ -99,9 +99,16 @@ Remote execution may require:
 
 ### Cloud
 
-Cloud mode connects supported workflows to configured cloud infrastructure.
+Cloud mode runs ICESEE on your own AWS account (bring-your-own-AWS), through
+the same Connect AWS Account → Prepare cloud → Review & Launch flow as
+CryoLauncher — see the platform-wide
+[Cloud Run Guide](https://cryostack.eas.gatech.edu/docs/hpc_cloud.html)
+for the full walkthrough and current status.
 
-Availability depends on the CryoStack deployment and the configured cloud backend.
+Today this path is verified end-to-end for exactly one configuration: the
+**Lorenz-96** example at a single process (**NP = 1**). Other examples or a
+higher process count are not yet verified and CryoStack will not let you
+launch them — the Review card explains why.
 
 ## Select an Example
 

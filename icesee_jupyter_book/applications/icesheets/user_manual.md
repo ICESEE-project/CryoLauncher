@@ -280,15 +280,20 @@ example**, in your personal dataset area.
   scheduler-managed.
 </p>
 <p>
-  <b>Cloud</b> <span class="cryostack-status dev">In development</span>
-  &nbsp;— run on <b>your own</b> AWS account and credits. You connect the
-  account once (<b>Connect AWS Account</b> → <b>Open AWS Setup</b> → create the
-  CryoStack access role → <b>Verify</b>), CryoStack prepares the required
-  infrastructure, and you review an estimated cost before launching. CryoStack
-  uses <b>temporary role access</b> and never stores your AWS access keys — you
-  are never asked to paste an access key, a secret, or a CLI profile. Real
-  cloud execution has not yet been accepted end-to-end; do not depend on Cloud
-  for production work yet.
+  <b>Cloud</b> <span class="cryostack-status dev">In validation</span>
+  &nbsp;— run on <b>your own</b> AWS account and credits (bring-your-own-AWS).
+  You connect the account once (<b>Connect AWS Account</b> → <b>Open AWS
+  Setup</b> → create the CryoStack access role → <b>Verify</b>), CryoStack
+  prepares the required infrastructure, and you review an estimated cost
+  before launching. CryoStack uses <b>temporary role access</b> and never
+  stores your AWS access keys — you are never asked to paste an access key, a
+  secret, or a CLI profile. ICESEE's own Cloud tab uses this exact same
+  Connect/Prepare/Review flow. The onboarding and infrastructure-provisioning
+  steps below are exercised and working; the full BYO-AWS operational
+  lifecycle (through a completed run and cleanup) is still being validated
+  end-to-end — see the platform-wide
+  <a href="../../docs/hpc_cloud.html">Cloud Run Guide</a> for the current
+  scope and known limits before depending on Cloud for production work.
 </p>
 :::
 
