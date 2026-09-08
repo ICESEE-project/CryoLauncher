@@ -76,6 +76,10 @@ from icesee_jupyter_book.core.cloud_runner import (
     submit_cloud_example,
 )
 from icesee_jupyter_book.core import run_records
+from icesee_jupyter_book.core.runs_manager import IceseeRunsManager
+from cryostack_src.frontend.cryolauncher.workspace.run_history import (
+    build_workspace_history_panel,
+)
 
 from icesee_jupyter_book.ui.shared_ssh_widgets import build_ssh_key_manager
 
@@ -1289,6 +1293,10 @@ def build_icesee_ui():
                     example=example_dd.value, execution_mode="local",
                     backend="local", status="done" if result.success else "failed",
                 )
+                try:
+                    (result.run_dir / "run.log").write_text(result.log_text, encoding="utf-8")
+                except Exception:
+                    pass   # the Run Log tab falls back to "no local log captured"
 
                 with log_out:
                     print("[local] Example :", example_dd.value)
@@ -2703,6 +2711,67 @@ def build_icesee_ui():
                     probe()
         ssh_key_manager_box.observe(_probe_ssh_key_manager, names="selected_index")
 
+        # =========================================================
+        # Workspace (Runs / Files) -- the same structural language as
+        # CryoLauncher's Workspace shell, reusing its shared history panel
+        # verbatim over an ICESEE-native manager (run_records.py-backed).
+        # Results reuse the existing local figures/H5 preview; the DA-aware
+        # ResultPackage (ensemble/analysis/RMSE) is a separate, larger port.
+        # =========================================================
+        icesee_runs_manager = IceseeRunsManager(root=_icesee_run_dir_base())
+
+        def _on_icesee_run_selected(run_id):
+            run = icesee_runs_manager.selected_run()
+            if run and run.workspace_directory:
+                refresh_results_preview(run.workspace_directory, results_out)
+
+        def _on_icesee_tail_selected_run():
+            run = icesee_runs_manager.selected_run()
+            log_out.clear_output()
+            with log_out:
+                print(icesee_runs_manager.tail(run.id) if run else "No run selected.")
+
+        def _on_icesee_download_selected_results():
+            run = icesee_runs_manager.selected_run()
+            if not run:
+                return
+            zip_path = icesee_runs_manager.download_results(run.id)
+            with log_out:
+                if zip_path is not None:
+                    display(FileLink(str(zip_path)))
+                else:
+                    print("[workspace] No local results captured for this run yet.")
+
+        def _on_icesee_download_selected_figures():
+            run = icesee_runs_manager.selected_run()
+            if not run:
+                return
+            zip_path = icesee_runs_manager.download_figures(run.id)
+            with log_out:
+                if zip_path is not None:
+                    display(FileLink(str(zip_path)))
+                else:
+                    print("[workspace] No local figures captured for this run yet.")
+
+        icesee_history_panel = build_workspace_history_panel(
+            manager=icesee_runs_manager,
+            on_run_selected=_on_icesee_run_selected,
+            on_tail_log=_on_icesee_tail_selected_run,
+            on_download=_on_icesee_download_selected_results,
+            on_show_figures=_on_icesee_download_selected_figures,
+            defer_initial_load=True,
+        )
+
+        workspace_box = W.Accordion(children=[
+            W.VBox([
+                icesee_history_panel.runs_panel,
+                W.HTML("<div class='cryostack-section-label' style='margin-top:10px'>Files</div>"),
+                icesee_history_panel.files_panel,
+            ], layout=W.Layout(gap="8px"))
+        ])
+        workspace_box.set_title(0, "🗂️ Workspace (Runs / Files)")
+        workspace_box.selected_index = None
+
         # ssh_key_manager_box = W.Accordion(children=[ssh_key_manager])
         # # ssh_key_manager_box.set_title(0, "🔐 SSH Key Manager")
         # ssh_key_manager_box.set_title(0, "🔐 Server-side SSH Key Manager")
@@ -2840,6 +2909,7 @@ def build_icesee_ui():
                 header,
                 row,
                 actions_card,
+                workspace_box,
                 back_link,
             ],
             layout=W.Layout(width="100%"),
