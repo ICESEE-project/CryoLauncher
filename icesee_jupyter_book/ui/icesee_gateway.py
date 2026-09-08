@@ -84,9 +84,14 @@ from icesee_jupyter_book.core.cloud_bridge_adapter import (
 from cryostack_src.cloud.diagnostics import merge_aws_resources, resources_from_poll
 from icesee_jupyter_book.core.run_records import da_identity_from_params
 from cryostack_src.frontend.cryolauncher.panels.run_plan import build_run_plan_panel
+from cryostack_src.frontend.cryolauncher.panels.run_settings import build_run_settings_panel
+from cryostack_src.frontend.cryolauncher.panels.runtime_panel import build_runtime_panel
 from cryostack_src.frontend.cryolauncher.workspace.run_history import (
     build_workspace_history_panel,
 )
+from cryostack_src.frontend.cryolauncher.workspace.run_details import build_run_details
+from cryostack_src.frontend.cryolauncher.workspace.explorer import build_workspace_explorer
+from cryostack_src.frontend.cryolauncher.workspace.toolbar import build_workspace_toolbar
 
 from icesee_jupyter_book.ui.shared_ssh_widgets import build_ssh_key_manager
 
@@ -2644,7 +2649,6 @@ def build_icesee_ui():
         spack_pmix_dir_row = W.HBox([W.HTML("<div class='icesee-lbl'>PMIX_DIR:</div>"), spack_pmix_dir], layout=W.Layout(gap="12px"))
         spack_existing_sbatch_row = W.Box([spack_use_existing_sbatch], layout=W.Layout(margin="0 0 0 120px"))
 
-        remote_controls_row = W.HBox([status_btn, tail_btn, terminate_btn], layout=W.Layout(gap="10px"))
         # B4: Job settings / Compute resources / Allocation are arranged by
         # build_slurm_resources_panel; only ICESEE's MPI + module/export rows
         # are laid out here and handed to the panel as extra_children.
@@ -2830,16 +2834,10 @@ def build_icesee_ui():
             on_show_figures=_on_icesee_download_selected_figures,
             defer_initial_load=True,
         )
-
-        workspace_box = W.Accordion(children=[
-            W.VBox([
-                icesee_history_panel.runs_panel,
-                W.HTML("<div class='cryostack-section-label' style='margin-top:10px'>Files</div>"),
-                icesee_history_panel.files_panel,
-            ], layout=W.Layout(gap="8px"))
-        ])
-        workspace_box.set_title(0, "🗂️ Workspace (Runs / Files)")
-        workspace_box.selected_index = None
+        # The single Workspace (Runs/Files/Run Log/Results) is assembled at
+        # the end of this function via the SAME shared build_run_details/
+        # build_workspace_explorer CryoLauncher uses -- not a second,
+        # ICESEE-only Accordion presentation.
 
         # =========================================================
         # Run Plan -- the CryoLauncher semantic separation (execution mode
@@ -2909,7 +2907,11 @@ def build_icesee_ui():
 
         # Remote panel. Authentication + the connector card + "Open Connector
         # Setup" now live inside the Remote connection panel (B4). "Check SSH
-        # Access" is the panel's primary action; job-control buttons stay here.
+        # Access" is the panel's primary action. Status / Tail / Terminate are
+        # NOT duplicated here -- Status/Tail live in the Workspace Run Log
+        # toolbar and Terminate lives in the Execution panel, matching
+        # CryoLauncher's own placement exactly (only "Check SSH"-style connect
+        # actions are ever duplicated, into the Workspace toolbar).
         remote_box = W.VBox(
             [
                 W.HTML("<div class='icesee-h'>Remote</div>"),
@@ -2917,19 +2919,15 @@ def build_icesee_ui():
                 exec_backend_box,
                 slurm_box,
                 ssh_key_manager_box,
-                W.HBox(
-                    [status_btn, tail_btn, terminate_btn],
-                    layout=W.Layout(gap="10px", flex_wrap="wrap"),
-                ),
-                # W.HBox(
-                #     [preview_results_btn, results_download_btn],
-                #     layout=W.Layout(gap="10px", flex_wrap="wrap"),
-                # ),
             ],
             layout=W.Layout(gap="8px"),
         )
 
-        # Cloud panel
+        # Cloud panel -- Submit is this panel's own action (the same
+        # structural role CryoLauncher's cloud_environment "Launch cloud run"
+        # plays: mode-specific, not the generic Execution surface). Status/
+        # Logs live in the Workspace Run Log toolbar; Terminate lives in the
+        # Execution panel -- neither is duplicated here.
         cloud_panel = W.VBox(
             [
                 W.HTML("<div class='icesee-h'>Cloud</div>"),
@@ -2941,7 +2939,7 @@ def build_icesee_ui():
                 W.HBox([W.HTML("<div class='icesee-lbl'>Queue:</div>"), batch_job_queue], layout=W.Layout(gap="12px")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Job def:</div>"), batch_job_def], layout=W.Layout(gap="12px")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Job name:</div>"), batch_job_name], layout=W.Layout(gap="12px")),
-                W.HBox([cloud_submit_btn, cloud_status_btn, cloud_logs_btn, cloud_terminate_btn], layout=W.Layout(gap="10px")),
+                W.HBox([cloud_submit_btn], layout=W.Layout(gap="10px")),
             ],
             layout=W.Layout(gap="8px"),
         )
@@ -2956,6 +2954,12 @@ def build_icesee_ui():
         remote_box.layout   = W.Layout(width="100%")
         cloud_panel.layout     = W.Layout(width="100%")
 
+        # Workspace Run Log toolbar: swapped by execution mode, exactly the
+        # CryoLauncher pattern (log_runtime_controls in icesheets_gateway.py)
+        # -- status/tail/connect-type diagnostics live here, never in the
+        # scientific config panel, and never a second time in Execution.
+        log_runtime_controls = build_workspace_toolbar([])
+
         def _toggle_panels_from_tabs(_=None):
             mode = get_mode()
 
@@ -2965,12 +2969,28 @@ def build_icesee_ui():
             status_btn.disabled = not is_remote
             tail_btn.disabled = not is_remote
             terminate_btn.disabled = not is_remote
+            terminate_btn.layout.display = "" if is_remote else "none"
 
             is_cloud = (mode == MODE_CLOUD)
             cloud_submit_btn.disabled = not is_cloud
             cloud_status_btn.disabled = not is_cloud
             cloud_logs_btn.disabled = not is_cloud
             cloud_terminate_btn.disabled = not is_cloud
+            cloud_terminate_btn.layout.display = "" if is_cloud else "none"
+
+            # Cloud has its own dedicated Submit (cloud_submit_btn, inside the
+            # Cloud panel) -- the generic Execution Run button is hidden for
+            # Cloud, the same rule CryoLauncher's run_btn follows for its own
+            # cloud path (a lesson from a real live-acceptance bug: two submit
+            # surfaces for the same job).
+            action_btn.layout.display = "none" if is_cloud else ""
+
+            if is_remote:
+                log_runtime_controls.children = (connect_btn, status_btn, tail_btn, clear_btn)
+            elif is_cloud:
+                log_runtime_controls.children = (cloud_status_btn, cloud_logs_btn, clear_btn)
+            else:
+                log_runtime_controls.children = (clear_btn,)
 
             update_action_button()
 
@@ -2980,9 +3000,25 @@ def build_icesee_ui():
         exec_backend_choice.observe(_toggle_exec_backend_ui, names="value")
         _toggle_exec_backend_ui()
 
-        left = W.VBox(
-            [
-                W.HTML("<div class='icesee-h'>Run settings</div>"),
+        log_out.add_class("icesee-out")
+        results_out.add_class("icesee-out")
+
+        # =========================================================
+        # Application shell -- GENUINELY the same shell CryoLauncher uses,
+        # not an ICESEE imitation of it: build_run_settings_panel (Run
+        # settings, with Run Plan nested as its last child, exactly
+        # CryoLauncher's own composition), build_runtime_panel (Execution:
+        # state + submit/terminate), build_run_details (the one Workspace:
+        # Runs/Files/Run Log/Results), build_workspace_explorer (the
+        # top-level two-column shell). ICESEE's Remote/Cloud content already
+        # lives inside mode_tabs (a structural difference CryoLauncher does
+        # not have -- its Remote/Cloud panels are simultaneously-present,
+        # visibility-toggled VBoxes); build_run_settings_panel's own
+        # remote_panel/cloud_panel slots are therefore inert placeholders
+        # here, not a second copy of that content.
+        # =========================================================
+        icesee_run_settings = build_run_settings_panel(
+            configuration_rows=[
                 W.HBox([W.HTML("<div class='icesee-lbl'>Mode:</div>"), mode_tabs], layout=W.Layout(gap="8px", width="100%")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Example:</div>"), example_dd], layout=W.Layout(gap="8px", width="100%")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Preset:</div>"), preset_dd], layout=W.Layout(gap="8px", width="100%")),
@@ -2995,38 +3031,32 @@ def build_icesee_ui():
                 W.HTML("<div class='icesee-subtle' style='margin:8px 0 8px'>Full configuration (from <code>params.yaml</code>)</div>"),
                 params_holder,
             ],
-            layout=W.Layout(gap="8px"),
+            remote_panel=W.HTML(""),   # Remote content already lives in mode_tabs above
+            cloud_panel=W.HTML(""),    # Cloud content already lives in mode_tabs above
+            run_plan=icesee_run_plan.container,
         )
-        left_card = W.VBox([left])
-        left_card.add_class("icesee-card")
-        left_card.layout = W.Layout(width="100%", flex="0 0 42%", min_width="0")
 
-        right = W.VBox(
-            [
-                W.HTML("<div class='icesee-h'>Run log</div>"),
-                log_out,
-                W.HTML("<div class='icesee-h' style='margin-top:14px'>Results preview</div>"),
-                results_out,
-                download_buttons_row,
-            ]
+        icesee_runtime = build_runtime_panel(
+            status_widget=status_chip,
+            run_button=action_btn,
+            remote_terminate_button=terminate_btn,
+            cloud_terminate_button=cloud_terminate_btn,
         )
-        right_card = W.VBox([right])
-        right_card.add_class("icesee-card")
-        right_card.layout = W.Layout(width="100%", flex="0 0 58%", min_width="0")
 
-        log_out.add_class("icesee-out")
-        results_out.add_class("icesee-out")
+        icesee_workspace = build_run_details(
+            log_output=log_out,
+            results_output=results_out,
+            download_controls=download_buttons_row,
+            log_controls=log_runtime_controls,
+            runs_panel=icesee_history_panel.runs_panel,
+            files_panel=icesee_history_panel.files_panel,
+        )
 
-        # actions = W.HBox([run_btn, clear_btn, status_chip], layout=W.Layout(gap="12px"))
-        actions = W.HBox([action_btn, clear_btn, status_chip], layout=W.Layout(gap="12px"))
-        actions_card = W.VBox([W.HTML("<div class='icesee-h'>Status</div>"), actions])
-        actions_card.add_class("icesee-card")
-
-        left_card.add_class("icesee-col")
-        right_card.add_class("icesee-col")
-
-        row = W.HBox([left_card, right_card], layout=W.Layout(width="100%", display="flex", gap="26px"))
-        row.add_class("icesee-row")
+        icesee_shell = build_workspace_explorer(
+            run_settings=icesee_run_settings,
+            runtime=icesee_runtime.container,
+            run_details=icesee_workspace.container,
+        )
 
         page = W.VBox(
             [
@@ -3038,17 +3068,13 @@ def build_icesee_ui():
 
                 app_menu,
                 header,
-                row,
-                actions_card,
-                icesee_run_plan.container,
-                workspace_box,
+                icesee_shell.container,
+                icesee_shell.height_sync,
                 back_link,
             ],
             layout=W.Layout(width="100%"),
         )
         page.add_class("icesee-page")
-
-        # cloud_submit_btn.layout.display = "none"
 
         set_status("idle")
         rebuild_for_example()

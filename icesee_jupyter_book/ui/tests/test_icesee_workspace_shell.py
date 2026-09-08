@@ -34,7 +34,11 @@ def test_gateway_reuses_the_shared_workspace_history_panel():
     assert "class WorkspaceHistoryPanel" not in src
 
 
-def test_workspace_box_is_mounted_on_the_page(monkeypatch):
+def test_workspace_is_mounted_on_the_page_via_the_shared_shell(monkeypatch):
+    """Superseded by test_icesee_gui_structural_parity.py's fuller checks --
+    kept as a smoke assertion that a 'Workspace' heading is present, now via
+    the shared build_run_details/build_workspace_explorer shell rather than
+    an ICESEE-only Accordion."""
     monkeypatch.setenv("CRYOSTACK_WORKSPACE_USER", "workspace-shell-user")
     monkeypatch.setenv("USER", "workspace-shell-svc")
     import matplotlib
@@ -42,17 +46,16 @@ def test_workspace_box_is_mounted_on_the_page(monkeypatch):
     from icesee_jupyter_book.ui.icesee_gateway import build_icesee_ui
 
     page = build_icesee_ui()
-    titles = []
+    htmls = []
 
     def walk(w):
-        if isinstance(w, W.Accordion):
-            for i in range(len(w.children)):
-                titles.append(w.get_title(i))
+        if isinstance(w, W.HTML):
+            htmls.append(w.value or "")
         for c in getattr(w, "children", ()):
             walk(c)
 
     walk(page)
-    assert any("Workspace" in (t or "") for t in titles)
+    assert any("cryostack-workspace-heading" in h and "Workspace" in h for h in htmls)
 
 
 def test_selecting_a_run_refreshes_the_existing_results_preview(monkeypatch, tmp_path):
