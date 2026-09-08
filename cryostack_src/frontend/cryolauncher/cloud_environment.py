@@ -61,6 +61,8 @@ class CloudEnvironmentWidgets:
     job_queue: W.Text
     job_definition: W.Text
     job_name: W.Text
+    matlab_license_arn: W.Text
+    matlab_license_save_button: W.Button
 
     account_status: W.HTML
     storage_status: W.HTML
@@ -894,6 +896,7 @@ def build_cloud_environment_card(
     job_queue: str = "",
     job_definition: str = "",
     job_name: str = "icesheets",
+    matlab_license_secret_arn: str = "",
 ) -> CloudEnvironmentWidgets:
     """
     Build the ICESEE Cloud Environment panel.
@@ -1070,6 +1073,35 @@ def build_cloud_environment_card(
         ),
     )
 
+    matlab_license_arn_widget = W.Text(
+        description="MATLAB license ARN:",
+        value=matlab_license_secret_arn,
+        placeholder="arn:aws:secretsmanager:<region>:<account>:secret:<name>",
+        layout=W.Layout(
+            width="100%",
+        ),
+        style={
+            "description_width": "150px",
+        },
+    )
+
+    matlab_license_caption = W.HTML(
+        value=(
+            "<div style='font-size:11px;color:#96a1b4;line-height:1.45;'>"
+            "ISSM cloud runs need a MATLAB license reachable from AWS Batch. "
+            "Create a Secrets Manager secret <b>in your own AWS account</b> "
+            "holding the license value, then paste its ARN here -- CryoStack "
+            "never sees or stores the license value itself, only this "
+            "non-secret identifier."
+            "</div>"
+        ),
+    )
+
+    matlab_license_save_button = secondary_button(
+        "Save license ARN",
+        icon="save",
+    )
+
     advanced_body = W.VBox(
         [
             advanced_caption,
@@ -1078,6 +1110,9 @@ def build_cloud_environment_card(
             job_queue_widget,
             job_definition_widget,
             job_name_widget,
+            matlab_license_caption,
+            matlab_license_arn_widget,
+            matlab_license_save_button,
         ],
         layout=W.Layout(
             width="100%",
@@ -1184,6 +1219,8 @@ def build_cloud_environment_card(
         job_queue=job_queue_widget,
         job_definition=job_definition_widget,
         job_name=job_name_widget,
+        matlab_license_arn=matlab_license_arn_widget,
+        matlab_license_save_button=matlab_license_save_button,
 
         account_status=account_status,
         storage_status=storage_status,

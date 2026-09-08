@@ -2937,6 +2937,47 @@ def build_icesheets_ui():
         cloud_environment.verify_button.on_click(aws_connect.verify)
         cloud_environment.recheck_button.on_click(aws_connect.recheck)
         cloud_environment.disconnect_button.on_click(aws_connect.disconnect)
+
+        # -- ISSM cloud MATLAB license: a non-secret Secrets Manager ARN on
+        # the connected AWS account (cryostack_src/cloud/matlab_license.py).
+        # CryoStack only ever stores/threads the ARN -- never the license
+        # value -- through to cloud_run_preflight via _resolve_cloud_execution.
+        def _matlab_license_connection_store():
+            from cryostack_src.cloud.connect import AWSConnectionStore
+            return AWSConnectionStore(user=workspace_manager.owner)
+
+        try:
+            _existing_connection = _matlab_license_connection_store().load()
+            if _existing_connection is not None:
+                cloud_environment.matlab_license_arn.value = (
+                    _existing_connection.matlab_license_secret_arn
+                )
+        except Exception:
+            pass    # unauthenticated / dev-mode build: leave the field blank
+
+        def _save_matlab_license_arn(_=None):
+            from cryostack_src.cloud.matlab_license import assert_not_a_license_value
+
+            arn = (cloud_environment.matlab_license_arn.value or "").strip()
+            try:
+                assert_not_a_license_value(arn)
+            except ValueError as e:
+                with log_out:
+                    print("[cloud][ERROR]", e)
+                return
+            store = _matlab_license_connection_store()
+            connection = store.load()
+            if connection is None:
+                with log_out:
+                    print("[cloud][ERROR] Connect an AWS account before setting "
+                          "a MATLAB license ARN.")
+                return
+            store.save(connection.with_matlab_license_secret(arn))
+            with log_out:
+                print("[cloud] MATLAB license ARN saved." if arn
+                      else "[cloud] MATLAB license ARN cleared.")
+
+        cloud_environment.matlab_license_save_button.on_click(_save_matlab_license_arn)
         # failed-verification recovery: repair the same account, or start a
         # STAGED switch to a different one (C7 live-acceptance fix -- an
         # "error" connection used to have no reachable action). Change AWS
