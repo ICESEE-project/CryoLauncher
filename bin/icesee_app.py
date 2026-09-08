@@ -652,7 +652,7 @@ async def proxy_run_center(request: web.Request) -> web.StreamResponse:
 
 async def proxy_icesheets(request: web.Request) -> web.StreamResponse:
     state: ICESEEState = request.app["state"]
-    return await _proxy_application(request, state.icesheets, "IceSheets")
+    return await _proxy_application(request, state.icesheets, "CryoLauncher")
 
 
 def make_app() -> web.Application:

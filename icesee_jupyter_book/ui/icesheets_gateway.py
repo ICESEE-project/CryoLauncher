@@ -303,7 +303,7 @@ def build_sidebar():
         <a href="/index.html">Home</a>
 
         <div class="icesee-nav-group">Getting Started</div>
-        <a href="/intro.html">ICESEE on GHUB</a>
+        <a href="/intro.html">ICESEE Overview</a>
         <a href="/quickstart.html">Quickstart</a>
         <a href="/icesee_workflow.html">ICESEE Workflow Overview</a>
 
@@ -3966,6 +3966,7 @@ def build_icesheets_ui():
                 # W.HTML(css),
                 auto_scroll_script,
                 W.HTML(CRYOSTACK_FRONTEND_CSS),
+                W.HTML("<script>document.title = 'CryoLauncher';</script>"),
 
                 experiment_bridge.widget(),
                 workspace_bridge.widget(),

@@ -191,11 +191,27 @@ _SHARED_APPLICATION_CSS = """
     line-height: 1.75;
 }
 
+/* Each row is "<div><span class="...-key">Label:</span> Value</div>" --
+   shared by CryoLauncher's own Run Plan summary and ICESEE's (Run Plan
+   and the Workspace Selected-Run card). A flex row with a fixed-width
+   label column keeps every label/value pair aligned and gives the value
+   clear breathing room instead of the label and value running together. */
+.cryostack-summary > div,
+.icesee-summary > div {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    overflow-wrap: anywhere;
+}
+
 .cryostack-summary-key,
 .icesee-summary-k {
     color: rgba(15, 23, 42, 0.90);
 
     font-weight: 700;
+
+    flex: 0 0 auto;
+    min-width: 150px;
 }
 
 

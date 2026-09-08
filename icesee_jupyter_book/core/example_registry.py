@@ -12,7 +12,7 @@ from .paths import EXT
 
 
 EXAMPLES = {
-    "Lorenz-96 (fully runnable in GHUB)": dict(
+    "Lorenz-96 (fully runnable locally)": dict(
         enabled=True,
         base=EXT / "applications" / "lorenz_model" / "examples" / "lorenz96",
         run_script="run_da_lorenz96.py",

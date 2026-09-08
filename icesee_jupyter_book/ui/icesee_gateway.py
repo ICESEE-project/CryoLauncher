@@ -2818,7 +2818,7 @@ def build_icesee_ui():
 
         server_key_note = W.HTML("""
         <div class='icesee-subtle' style='line-height:1.5; margin-bottom:8px;'>
-        This manages SSH keys on the web server/GHUB side for direct SSH.
+        This manages SSH keys on the web server side for direct SSH.
         For Local Connector / VPN bridge mode, the connector creates the key on your workstation.
         </div>
         """)
@@ -2961,7 +2961,7 @@ def build_icesee_ui():
                 MODE_LOCAL: "Local", MODE_REMOTE: "Remote", MODE_CLOUD: "Cloud",
             }.get(mode, mode)
             backend_label = {
-                MODE_LOCAL: "Local (GHUB)",
+                MODE_LOCAL: "Local",
                 MODE_REMOTE: {"spack": "ICESEE-Spack", "container": "ICESEE-Container"}
                     .get(exec_backend_choice.value, exec_backend_choice.value),
                 MODE_CLOUD: "AWS Batch",
@@ -2981,11 +2981,15 @@ def build_icesee_ui():
                 rows += identity.summary_rows()
             except Exception:
                 pass    # a mid-edit params.yaml must never break the summary
+            # Same row markup CryoLauncher's own Run Plan summary already
+            # uses (icesee-summary / icesee-summary-k) -- not a second,
+            # ICESEE-only convention -- so both apps share one labeled-row
+            # layout (and its spacing/alignment CSS) in shared_app_styles.py.
             run_plan_summary_html.value = (
-                "<div class='cryostack-selected-run-card'>"
+                "<div class='icesee-summary'>"
                 + "".join(
-                    f"<div><span>{html_lib.escape(label)}</span>"
-                    f"<b>{html_lib.escape(str(value))}</b></div>"
+                    f"<div><span class='icesee-summary-k'>"
+                    f"{html_lib.escape(label)}:</span> {html_lib.escape(str(value))}</div>"
                     for label, value in rows if value
                 )
                 + "</div>"
@@ -3047,7 +3051,7 @@ def build_icesee_ui():
         cloud_panel.add_class("icesee-card")
 
         mode_tabs.children = [local_tab_card, remote_box, cloud_panel]
-        mode_tabs.set_title(0, "Local (GHUB)")
+        mode_tabs.set_title(0, "Local")
         mode_tabs.set_title(1, "Remote")
         mode_tabs.set_title(2, "Cloud")
 
@@ -3163,6 +3167,7 @@ def build_icesee_ui():
             [
                 shared_styles,
                 W.HTML(css),
+                W.HTML("<script>document.title = 'ICESEE';</script>"),
 
                 experiment_bridge.widget(),
                 workspace_bridge.widget(),

@@ -143,7 +143,7 @@ def test_authenticated_hit_during_warmup_gets_the_themed_starting_page(monkeypat
             assert r.status == 503
             assert r.headers.get("Retry-After")
             body = await r.text()
-            assert "IceSheets is starting" in body
+            assert "CryoLauncher is starting" in body
             assert "CryoStack" in body
             assert "http-equiv=\"refresh\"" in body
         finally:

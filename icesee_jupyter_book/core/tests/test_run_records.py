@@ -91,7 +91,7 @@ def test_summary_rows_omit_empty_values():
 def test_build_run_metadata_carries_provider_and_da_identity_no_secrets():
     meta = rr.build_run_metadata(
         params=_LORENZ_PARAMS,
-        example="Lorenz-96 (fully runnable in GHUB)",
+        example="Lorenz-96 (fully runnable locally)",
         execution_mode="Local",
         backend="",
         source="EnKF_all_types.ipynb",
@@ -121,7 +121,7 @@ def test_record_and_discover_round_trip(tmp_path):
         run_id="20260907_120000-abc123",
         name="ICESEE EnKF run",
         params=_LORENZ_PARAMS,
-        example="Lorenz-96 (fully runnable in GHUB)",
+        example="Lorenz-96 (fully runnable locally)",
         execution_mode="local",
         backend="",
         source="EnKF_all_types.ipynb",
