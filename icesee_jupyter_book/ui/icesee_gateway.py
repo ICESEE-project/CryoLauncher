@@ -627,7 +627,7 @@ def build_icesee_ui():
         def _record_icesee_run(
             *, run_dir, run_id, params, example, execution_mode, backend,
             source="", run_target="", model_environment="", status="running",
-            jobid=None, remote_directory=None,
+            jobid=None, remote_directory=None, extra_metadata=None,
         ):
             """Write a local .cryostack-run.json manifest for this ICESEE run
             (run_records.record_run) without ever letting a manifest failure
@@ -640,6 +640,7 @@ def build_icesee_ui():
                     backend=backend, source=source, run_target=run_target,
                     model_environment=model_environment, status=status,
                     jobid=jobid, remote_directory=remote_directory,
+                    extra_metadata=extra_metadata,
                 )
             except Exception as _e:
                 with log_out:
@@ -2061,14 +2062,34 @@ def build_icesee_ui():
                 with log_out:
                     print("[remote][ERROR]", type(e).__name__, e)
 
-        def _icesee_cloud_bridge_config() -> IceseeCloudBridgeConfig:
-            """Fresh per-operation bridge config from the live Cloud widgets
-            -- the same 'temporary-role refresh per lifecycle operation'
-            pattern CryoLauncher's own current_cloud_bridge() uses, rather
-            than caching one bridge across the session."""
+        def _resolve_icesee_cloud_execution(*, region_override: str | None = None):
+            """Fresh per-operation credential resolution -- the SAME shared
+            resolver CryoLauncher uses (resolve_cloud_execution), not an
+            ICESEE-only credential path. A user who already connected a BYO
+            AWS account (through CryoLauncher's existing Connect AWS Account
+            UI -- the connection is scoped to the authenticated CryoStack
+            user, not the app) gets that same account here automatically, no
+            new ICESEE UI required. No connection -> unchanged developer/
+            ambient-profile behavior from the live Cloud widgets.
+
+            ``region_override`` lets status/terminate resolve against a
+            historical run's OWN persisted region (metadata['aws_resources'])
+            rather than whatever the Cloud panel's region field currently
+            says -- a later visit must not silently query the wrong region
+            just because the live widget has since changed."""
+            from cryostack_src.cloud.connect import resolve_cloud_execution
+
+            return resolve_cloud_execution(
+                region_hint=(region_override or aws_region.value.strip()),
+                profile_hint=(aws_profile.value.strip() or None),
+                model="icesee",
+            )
+
+        def _icesee_cloud_bridge_config(execution) -> IceseeCloudBridgeConfig:
             return IceseeCloudBridgeConfig(
-                region=aws_region.value.strip() or "us-east-1",
-                profile=(aws_profile.value.strip() or None),
+                region=execution.region,
+                profile=execution.profile,
+                credentials=execution.credentials,
             )
 
         def run_example_cloud_submit():
@@ -2090,15 +2111,31 @@ def build_icesee_ui():
             _rd = run_dir(_icesee_run_dir_base(), _run_id)
 
             try:
-                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                execution = _resolve_icesee_cloud_execution()
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
+
+                # BYO-AWS: blank fields resolve to the connected account's
+                # prepared defaults (same "blank = prepared default" contract
+                # CryoLauncher's Cloud Environment uses) -- s3_prefix always
+                # carries a 'runs' path segment since aws_batch_submit
+                # requires one. Developer mode (no connection) is completely
+                # unchanged: every field must still be typed by hand.
+                s3_prefix = cloud_bucket.value.strip()
+                job_queue = batch_job_queue.value.strip()
+                job_definition = batch_job_def.value.strip()
+                if execution.is_byo and execution.defaults is not None:
+                    s3_prefix = s3_prefix or f"s3://{execution.defaults.bucket}/runs"
+                    job_queue = job_queue or execution.defaults.job_queue
+                    job_definition = job_definition or execution.defaults.job_definition
+
                 result = submit_icesee_cloud_run(
                     bridge,
                     example_name=example_dd.value,
                     example_cfg=example_cfg,
                     config=cfg_yaml,
-                    s3_prefix=cloud_bucket.value.strip(),
-                    job_queue=batch_job_queue.value.strip(),
-                    job_definition=batch_job_def.value.strip(),
+                    s3_prefix=s3_prefix,
+                    job_queue=job_queue,
+                    job_definition=job_definition,
                     job_name=(batch_job_name.value.strip() or "icesee"),
                     run_dir_base=_icesee_run_dir_base(),
                     run_dir_name=_run_id,
@@ -2113,15 +2150,22 @@ def build_icesee_ui():
                     params=cfg_yaml, example=example_dd.value,
                     execution_mode="cloud", backend="aws",
                     source=example_dd.value,
-                    run_target=batch_job_def.value.strip(),
+                    run_target=job_definition,
                     status="running", jobid=result.job_id,
                     remote_directory=result.working_directory,
+                    extra_metadata={
+                        "cloud_account_mode": execution.mode,
+                        "cluster_mpi_np": cluster_mpi_np.value,
+                        "cluster_model_nprocs": cluster_model_nprocs.value,
+                        "ensemble_size": int(ens_sl.value),
+                    },
                 )
                 _merge_icesee_aws_resources(_rd, {
-                    "region": aws_region.value.strip() or "us-east-1",
+                    "region": execution.region,
+                    "account_id": execution.account_id,
                     "batch_job_id": result.job_id,
-                    "job_queue": batch_job_queue.value.strip(),
-                    "job_definition": batch_job_def.value.strip(),
+                    "job_queue": job_queue,
+                    "job_definition": job_definition,
                     "s3_run": result.working_directory,
                 })
 
@@ -2135,13 +2179,27 @@ def build_icesee_ui():
                 with log_out:
                     print("[cloud][ERROR]", type(e).__name__, e)
 
+        def _persisted_icesee_cloud_region() -> str | None:
+            if not STATUS.get("local_run_dir"):
+                return None
+            try:
+                manifest = Path(STATUS["local_run_dir"]) / run_records.MANIFEST_NAME
+                if not manifest.is_file():
+                    return None
+                return (read_manifest(manifest).metadata.get("aws_resources") or {}).get("region") or None
+            except Exception:
+                return None
+
         def run_example_cloud_status():
             if not STATUS.get("batch_job_id"):
                 with log_out:
                     print("[cloud] No Batch job id yet. Submit first.")
                 return
             try:
-                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                execution = _resolve_icesee_cloud_execution(
+                    region_override=_persisted_icesee_cloud_region(),
+                )
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
                 st = icesee_cloud_status(bridge, job_id=STATUS["batch_job_id"])
                 with log_out:
                     print("[cloud] status:", st.raw_state)
@@ -2162,7 +2220,10 @@ def build_icesee_ui():
                     print("[cloud] No Batch job id yet.")
                 return
             try:
-                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                execution = _resolve_icesee_cloud_execution(
+                    region_override=_persisted_icesee_cloud_region(),
+                )
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config(execution))
                 result = icesee_cloud_terminate(bridge, job_id=STATUS["batch_job_id"])
                 with log_out:
                     print("[cloud]", result.get("message")
