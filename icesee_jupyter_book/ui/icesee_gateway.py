@@ -75,6 +75,7 @@ from icesee_jupyter_book.core.cloud_runner import (
     aws_batch_status,
     submit_cloud_example,
 )
+from icesee_jupyter_book.core import run_records
 
 from icesee_jupyter_book.ui.shared_ssh_widgets import build_ssh_key_manager
 
@@ -606,6 +607,38 @@ def build_icesee_ui():
 
         def _new_icesee_run_id() -> str:
             return datetime.now().strftime("%Y%m%d_%H%M%S") + "-" + uuid.uuid4().hex[:6]
+
+        def _record_icesee_run(
+            *, run_dir, run_id, params, example, execution_mode, backend,
+            source="", run_target="", model_environment="", status="running",
+            jobid=None, remote_directory=None,
+        ):
+            """Write a local .cryostack-run.json manifest for this ICESEE run
+            (run_records.record_run) without ever letting a manifest failure
+            interrupt the real run -- a warning in the log is the worst case."""
+            try:
+                return run_records.record_run(
+                    run_dir=run_dir, run_id=run_id,
+                    name=f"ICESEE {example} ({execution_mode})",
+                    params=params, example=example, execution_mode=execution_mode,
+                    backend=backend, source=source, run_target=run_target,
+                    model_environment=model_environment, status=status,
+                    jobid=jobid, remote_directory=remote_directory,
+                )
+            except Exception as _e:
+                with log_out:
+                    print("[history][WARN] could not record run:", type(_e).__name__, _e)
+                return None
+
+        def _update_icesee_run(run_dir, **kwargs):
+            """Update a previously recorded ICESEE run manifest. Same
+            never-break-the-run contract as _record_icesee_run."""
+            try:
+                return run_records.update_run(run_dir, **kwargs)
+            except Exception as _e:
+                with log_out:
+                    print("[history][WARN] could not update run history:", type(_e).__name__, _e)
+                return None
 
         def local_remote_cache_dir() -> Path:
             rd = run_dir(_icesee_run_dir_base(), _new_icesee_run_id())
@@ -1239,6 +1272,8 @@ def build_icesee_ui():
             set_status("running")
             log_out.clear_output()
 
+            _run_id = _new_icesee_run_id()
+
             try:
                 result = run_local_example(
                     example_cfg=example_cfg,
@@ -1246,7 +1281,13 @@ def build_icesee_ui():
                     output_label=output_label_dd.value,
                     generate_report=gen_report.value,
                     run_dir_base=_icesee_run_dir_base(),
-                    run_dir_name=_new_icesee_run_id(),
+                    run_dir_name=_run_id,
+                )
+
+                _record_icesee_run(
+                    run_dir=result.run_dir, run_id=_run_id, params=cfg,
+                    example=example_dd.value, execution_mode="local",
+                    backend="local", status="done" if result.success else "failed",
                 )
 
                 with log_out:
@@ -1379,6 +1420,9 @@ def build_icesee_ui():
                 cfg_yaml = build_config_from_widgets()
                 params_text = yaml.safe_dump(cfg_yaml, sort_keys=False)
 
+                _run_id = _new_icesee_run_id()
+                _rd = run_dir(_icesee_run_dir_base(), _run_id)
+
                 if exec_backend_choice.value == "spack":
                     if use_connector:
                         result = submit_remote_example_via_connector(
@@ -1508,6 +1552,17 @@ def build_icesee_ui():
 
                 STATUS["remote_dir"] = result.remote_dir
                 STATUS["jobid"] = result.jobid
+                STATUS["local_run_dir"] = str(_rd)
+
+                _record_icesee_run(
+                    run_dir=_rd, run_id=_run_id, params=cfg_yaml,
+                    example=example_dd.value, execution_mode="remote",
+                    backend=exec_backend_choice.value,
+                    source=example_dd.value,
+                    run_target=cluster_name_for_keys.value or host,
+                    status="running", jobid=result.jobid,
+                    remote_directory=result.remote_dir,
+                )
 
                 experiment_bridge.create(
                     application="icesee",
@@ -1823,6 +1878,11 @@ def build_icesee_ui():
                         job_id=str(jobid),
                         **experiment_update,
                     )
+                    if STATUS.get("local_run_dir"):
+                        _update_icesee_run(
+                            Path(STATUS["local_run_dir"]),
+                            status=experiment_update.get("status"),
+                        )
 
                 with log_out:
                     if result["source"] == "squeue":
@@ -1997,6 +2057,17 @@ def build_icesee_ui():
 
                 STATUS["batch_job_id"] = result.batch_job_id
                 STATUS["s3_run"] = result.s3_run
+                STATUS["local_run_dir"] = str(result.run_dir)
+
+                _record_icesee_run(
+                    run_dir=result.run_dir, run_id=result.run_dir.name,
+                    params=cfg_yaml, example=example_dd.value,
+                    execution_mode="cloud", backend="aws",
+                    source=example_dd.value,
+                    run_target=batch_job_def.value.strip(),
+                    status="running", jobid=result.batch_job_id,
+                    remote_directory=result.s3_run,
+                )
 
                 set_status("done")
                 with log_out:
@@ -2023,6 +2094,11 @@ def build_icesee_ui():
                     print("[cloud] status:", st["status"])
                     if st["reason"]:
                         print("[cloud] reason:", st["reason"])
+                if STATUS.get("local_run_dir"):
+                    _batch_status = {"SUCCEEDED": "done", "FAILED": "failed"}.get(
+                        st["status"], "running"
+                    )
+                    _update_icesee_run(Path(STATUS["local_run_dir"]), status=_batch_status)
             except Exception as e:
                 with log_out:
                     print("[cloud][ERROR]", type(e).__name__, e)
