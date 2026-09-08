@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "CryoStack cross-account access role. Grants CryoStack least-privilege access to run scientific experiments on AWS Batch in your account, assumable only with your unique ExternalId. (template 2026-09-04)",
+  "Description": "CryoStack cross-account access role. Grants CryoStack least-privilege access to run scientific experiments on AWS Batch in your account, assumable only with your unique ExternalId. (template 2026-09-08)",
   "Parameters": {
     "ExternalId": {
       "Type": "String",
@@ -19,7 +19,6 @@
     "CryoStackExecutionRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
-        "RoleName": "CryoStackExecutionRole",
         "Description": "Assumed by CryoStack to run experiments on AWS Batch.",
         "MaxSessionDuration": 3600,
         "AssumeRolePolicyDocument": {

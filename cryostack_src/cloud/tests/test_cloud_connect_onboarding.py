@@ -370,3 +370,183 @@ def test_change_account_via_reconnect_replaces_only_this_users_metadata(tmp_path
     ob2 = _onboarding(tmp_path, runner=FakeAWS("774888247882"))
     result = ob2.verify(role_arn=ROLE_B)
     assert result.ok and result.connection.account_id == "774888247882"
+
+
+# ===========================================================================
+# WS onboarding role-name collision / existing-role recovery
+#
+# Root cause: the CloudFormation template hardcoded RoleName=
+# "CryoStackExecutionRole", so a second CREATE_STACK in the SAME AWS account
+# (a second CryoStack identity, or a genuinely new connection) always failed
+# with "Resource of type 'AWS::IAM::Role' ... already exists" and rolled
+# back. Fixed by (1) removing RoleName from the template -- CloudFormation
+# generates a unique physical name and Outputs.RoleArn is always the real
+# created ARN -- and (2) scoping the STACK name itself to
+# (connection_id, stack_attempt) via connection_stack_name(), never the
+# single fixed DEFAULT_STACK_NAME.
+# ===========================================================================
+from cryostack_src.cloud.connect.cloudformation import (
+    DEFAULT_STACK_NAME,
+    connection_stack_name,
+    execution_role_template,
+)
+
+
+def test_first_connection_in_a_clean_account_gets_a_connection_scoped_stack_name(tmp_path):
+    """A clean account: begin() must never hand back the single fixed
+    DEFAULT_STACK_NAME -- the stack name must be derived from THIS
+    connection's own id, and the template it points at must carry no
+    RoleName (CloudFormation will generate the physical role name)."""
+    ob = _onboarding(tmp_path)
+    step = ob.begin()
+
+    assert step.stack_name != DEFAULT_STACK_NAME
+    assert step.stack_name == connection_stack_name(step.connection.connection_id)
+    assert step.connection.connection_id.replace("conn-", "") in step.stack_name
+
+    q = parse_qs(urlparse(step.setup_url).fragment.split("?", 1)[1])
+    assert q["stackName"] == [step.stack_name]
+
+    template = execution_role_template()
+    assert "RoleName" not in template["Resources"]["CryoStackExecutionRole"]["Properties"]
+
+
+def test_retry_of_an_existing_connection_reuses_the_same_stack_and_external_id(tmp_path):
+    """An ordinary retry (page reload, "I created the role, verify now")
+    must reuse the EXACT same stack name and ExternalId -- never mint a new
+    one -- so a stack that already completed stays reusable/inspectable."""
+    ob = _onboarding(tmp_path)
+    first = ob.begin()
+
+    retried = _onboarding(tmp_path).begin()      # a fresh object == page reload
+    assert retried.external_id == first.external_id
+    assert retried.stack_name == first.stack_name
+    assert retried.connection.connection_id == first.connection.connection_id
+
+
+def test_second_cryostack_identity_in_the_same_aws_account_gets_a_different_stack(tmp_path):
+    """Two different CryoStack users (identities) connecting the SAME AWS
+    account must never be handed the same stack name -- each gets its own
+    stack, and (since the template has no RoleName) its own auto-named role,
+    so neither CREATE_STACK can ever collide with the other's role."""
+    step_a = _onboarding(tmp_path, uid="alice").begin()
+    step_b = _onboarding(tmp_path, uid="bob").begin()
+
+    assert step_a.connection.connection_id != step_b.connection.connection_id
+    assert step_a.stack_name != step_b.stack_name
+    assert step_a.external_id != step_b.external_id
+
+
+def test_a_previously_existing_fixed_name_role_can_no_longer_collide(tmp_path):
+    """Regression for the exact reported defect: even if an AWS account
+    already has an IAM role literally named CryoStackExecutionRole (from an
+    old template, or another stack), the template CryoStack now hands out
+    never asks CloudFormation to create that fixed name again -- so a
+    second CREATE_STACK in the same account cannot raise 'Resource of type
+    AWS::IAM::Role ... already exists' for it, regardless of how many prior
+    connections/stacks exist in the account."""
+    template = execution_role_template()
+    role_props = template["Resources"]["CryoStackExecutionRole"]["Properties"]
+    assert "RoleName" not in role_props
+
+    # every connection's stack points at the SAME template (no per-user
+    # template variant needed) -- collision-freedom comes entirely from (a)
+    # no fixed RoleName and (b) a connection-scoped stack name, verified here
+    # for three independent connections at once.
+    stacks = {
+        _onboarding(tmp_path, uid=uid).begin().stack_name
+        for uid in ("alice", "bob", "carol")
+    }
+    assert len(stacks) == 3
+
+
+def test_a_rolled_back_stack_gets_a_fresh_non_colliding_name_without_touching_identity(tmp_path):
+    """ROLLBACK_COMPLETE recovery: retry_with_fresh_stack() must mint a new,
+    different stack name for the SAME connection, while leaving ExternalId,
+    role_arn and status completely untouched -- so the user is never
+    stranded, and never asked to delete a working role."""
+    ob = _onboarding(tmp_path, runner=FakeAWS(deny=True))
+    first = ob.begin()
+    ob.verify(role_arn=ROLE_A)                    # left in "error" (simulates a stuck attempt)
+    before = ob.current()
+
+    retried = ob.retry_with_fresh_stack()
+
+    assert retried.stack_name != first.stack_name
+    assert retried.external_id == first.external_id          # identity preserved
+    assert retried.connection.connection_id == before.connection_id
+    after = ob.current()
+    assert after.role_arn == before.role_arn                 # untouched
+    assert after.status == before.status                     # untouched
+    assert after.stack_attempt == before.stack_attempt + 1
+
+    # a further ordinary retry (begin()) now reuses THIS new stack name
+    assert _onboarding(tmp_path).begin().stack_name == retried.stack_name
+
+
+def test_retry_with_fresh_stack_requires_an_existing_connection(tmp_path):
+    ob = _onboarding(tmp_path)
+    with pytest.raises(OnboardingConfigError):
+        ob.retry_with_fresh_stack()
+
+
+def test_pending_replacement_rolled_back_stack_gets_a_fresh_name_transactionally(tmp_path):
+    """The pending-replacement equivalent of the ROLLBACK_COMPLETE escape
+    hatch: it must never read or touch the ACTIVE connection -- Change AWS
+    account stays fully transactional even when its own stack needed a
+    retry name."""
+    ob = _onboarding(tmp_path, runner=FakeAWS("713938953301"))
+    ob.begin()
+    ob.verify(role_arn=ROLE_A)
+    active_before = ob.current()
+
+    ob.begin_change_account()
+    first_pending_stack = ob.store.load_pending().stack_attempt
+    retried = ob.retry_pending_with_fresh_stack()
+
+    assert ob.store.load_pending().stack_attempt == first_pending_stack + 1
+    assert retried.connection.external_id == ob.store.load_pending().external_id
+    # the active connection is byte-for-byte untouched
+    assert ob.current() == active_before
+
+
+def test_retry_pending_with_fresh_stack_requires_a_pending_connection(tmp_path):
+    ob = _onboarding(tmp_path)
+    with pytest.raises(OnboardingConfigError):
+        ob.retry_pending_with_fresh_stack()
+
+
+def test_no_other_users_connection_is_ever_touched_by_stack_retry(tmp_path):
+    """A defence-in-depth proof that retry_with_fresh_stack() for one user
+    cannot reach -- let alone modify -- another CryoStack user's connection
+    (and therefore their role/trust relationship) in any way."""
+    alice = _onboarding(tmp_path, uid="alice", runner=FakeAWS("713938953301"))
+    alice.begin()
+    alice.verify(role_arn=ROLE_A)
+    bob = _onboarding(tmp_path, uid="bob", runner=FakeAWS("774888247882"))
+    bob.begin()
+    bob.verify(role_arn=ROLE_B)
+
+    bob_before = bob.current()
+    alice.retry_with_fresh_stack()
+
+    assert bob.current() == bob_before
+    assert bob.current().role_arn == ROLE_B
+
+
+def test_verify_accepts_any_cloudformation_generated_physical_role_name(tmp_path):
+    """The pasted-back Role ARN is whatever CloudFormation actually created
+    (no fixed physical name any more) -- verify() must accept an
+    auto-generated name exactly as readily as the old fixed one, and persist
+    THAT exact ARN back."""
+    generated_arn = (
+        "arn:aws:iam::713938953301:role/"
+        "cryostack-access-a1b2c3d4e5f6a7b8-CryoStackExecutionRole-1A2B3C4D5E6F"
+    )
+    ob = _onboarding(tmp_path, runner=FakeAWS("713938953301"))
+    ob.begin()
+    result = ob.verify(role_arn=generated_arn)
+
+    assert result.ok
+    assert result.connection.role_arn == generated_arn
+    assert ob.current().role_arn == generated_arn

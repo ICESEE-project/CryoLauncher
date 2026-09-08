@@ -55,7 +55,7 @@ from dataclasses import dataclass
 
 from cryostack_src.workspace.identity import WorkspaceUser
 
-from .cloudformation import DEFAULT_STACK_NAME, quick_create_url
+from .cloudformation import connection_stack_name, quick_create_url
 from .defaults import derive_cloud_defaults
 from .models import AWSConnection
 from .principal import cryostack_principal_arn
@@ -136,33 +136,57 @@ class AWSOnboarding:
         return out
 
     # -- connect flow --------------------------------------------
-    def begin(self, *, region: str | None = None) -> ConnectStep:
-        """Load or mint this user's connection and build the Quick Create URL.
-
-        Reuses an existing record (stable ExternalId). A region is only applied
-        to a *new* record.
-        """
+    def _connect_step(self, conn: AWSConnection) -> ConnectStep:
+        """Build the Quick Create URL/ConnectStep for ``conn`` as it stands
+        right now -- the ONE place stack-name derivation happens, so every
+        caller (begin/begin_change_account/the two retry_* methods) agrees.
+        Never mutates or persists ``conn``; callers do that themselves."""
         principal = self.principal_arn()          # raise early if unset
         template_url = self.template_url()
-
-        conn = self.store.load()
-        if conn is None:
-            conn = self.store.create(region=(region or self.region).strip())
-
+        stack_name = connection_stack_name(conn.connection_id, attempt=conn.stack_attempt)
         url = quick_create_url(
             template_url=template_url,
             external_id=conn.external_id,
             region=conn.region,
             principal_arn=principal,
-            stack_name=DEFAULT_STACK_NAME,
+            stack_name=stack_name,
         )
         return ConnectStep(
             connection=conn,
             setup_url=url,
-            stack_name=DEFAULT_STACK_NAME,
+            stack_name=stack_name,
             principal_arn=principal,
             external_id=conn.external_id,
         )
+
+    def begin(self, *, region: str | None = None) -> ConnectStep:
+        """Load or mint this user's connection and build the Quick Create URL.
+
+        Reuses an existing record (stable ExternalId, stable stack name/
+        attempt). A region is only applied to a *new* record.
+        """
+        conn = self.store.load()
+        if conn is None:
+            conn = self.store.create(region=(region or self.region).strip())
+        return self._connect_step(conn)
+
+    def retry_with_fresh_stack(self) -> ConnectStep:
+        """The ACTIVE connection's previous CloudFormation attempt rolled
+        back (e.g. ``ROLLBACK_COMPLETE``) and its stack name can't be
+        reused. Mint a fresh, non-colliding stack name for the SAME
+        connection -- ExternalId and any already-recorded role/status are
+        completely untouched -- and return a new Quick Create URL for it.
+        Never call this for an ordinary retry (a page reload, or "I created
+        the role, verify it now"): :meth:`begin` already reuses the same
+        stack name for those, on purpose, so a stack that DID complete
+        keeps being reusable/inspectable under the same name."""
+        conn = self.store.load()
+        if conn is None:
+            raise OnboardingConfigError(
+                "No AWS connection to retry. Click Connect AWS account first."
+            )
+        conn = self.store.save(conn.with_new_stack_attempt())
+        return self._connect_step(conn)
 
     def reconnect(self, *, region: str | None = None) -> ConnectStep:
         """Explicitly rotate: new connection record + new ExternalId.
@@ -205,27 +229,23 @@ class AWSOnboarding:
         modified by this call -- it stays exactly as it was until
         :meth:`verify_pending_replacement` succeeds.
         """
-        principal = self.principal_arn()          # raise early if unset
-        template_url = self.template_url()
-
         pending = self.store.load_pending()
         if pending is None:
             pending = self.store.create_pending(region=(region or self.region).strip())
+        return self._connect_step(pending)
 
-        url = quick_create_url(
-            template_url=template_url,
-            external_id=pending.external_id,
-            region=pending.region,
-            principal_arn=principal,
-            stack_name=DEFAULT_STACK_NAME,
-        )
-        return ConnectStep(
-            connection=pending,
-            setup_url=url,
-            stack_name=DEFAULT_STACK_NAME,
-            external_id=pending.external_id,
-            principal_arn=principal,
-        )
+    def retry_pending_with_fresh_stack(self) -> ConnectStep:
+        """Same escape hatch as :meth:`retry_with_fresh_stack`, for a STAGED
+        "Change AWS account" replacement whose CloudFormation attempt rolled
+        back. The active connection is never read or touched by this call."""
+        pending = self.store.load_pending()
+        if pending is None:
+            raise OnboardingConfigError(
+                "No pending AWS account switch to retry. Click Change AWS "
+                "account first."
+            )
+        pending = self.store.save_pending(pending.with_new_stack_attempt())
+        return self._connect_step(pending)
 
     def verify_pending_replacement(self, *, role_arn: str) -> VerificationResult:
         """Assume the role for the STAGED replacement.

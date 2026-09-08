@@ -25,8 +25,8 @@
 Cross-account onboarding via CloudFormation Quick Create.
 
 The user opens a pre-filled CloudFormation *Quick Create* page in their own
-AWS console. It creates a single IAM role -- ``CryoStackExecutionRole`` --
-that:
+AWS console. It creates a single IAM role -- logical id
+``CryoStackExecutionRole`` -- that:
 
 * trusts **only** the deployment-configured CryoStack principal;
 * can be assumed **only** when ``sts:ExternalId`` equals the per-connection
@@ -37,16 +37,47 @@ that:
 
 ``ExternalId`` and the CryoStack principal ARN are template *parameters*, so
 one published template serves every deployment and every user.
+
+**Role/stack naming (2026-09-08 onboarding fix).** The role resource does
+NOT set an explicit ``RoleName`` -- CloudFormation generates a unique,
+stack-scoped physical name and the template's ``Outputs.RoleArn`` (which
+the user pastes back into CryoStack) is always the real, actual ARN of
+whatever CloudFormation actually created. Two consequences:
+
+* A second CryoStack connection (a different CryoStack identity, or a
+  genuinely new connection replacing this one) can create its own role in
+  the SAME AWS account without ever colliding on role name -- previously
+  every connection's role was hardcoded to the single physical name
+  ``CryoStackExecutionRole``, so a second ``CREATE_STACK`` in the same
+  account always failed with "Resource of type 'AWS::IAM::Role' ... already
+  exists" and rolled back.
+* CryoStack never needs to assume, validate against, or hardcode any
+  particular physical role name anywhere downstream (verify.py/assume_role.py
+  already only require a syntactically valid ARN + a matching ExternalId --
+  see :func:`cryostack_src.cloud.connect.models.is_valid_role_arn`), so this
+  requires no change to the verify/assume-role/execution path at all.
+
+The STACK name is likewise never the single fixed ``DEFAULT_STACK_NAME`` --
+see :func:`connection_stack_name`, used by ``onboarding.py`` to scope it to
+one connection (and, via ``AWSConnection.stack_attempt``, to one attempt of
+that connection), so a stack that rolled back to ``ROLLBACK_COMPLETE``
+never strands the user on a name they can't reuse.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import quote, urlencode
 
+#: kept for backward-compatible reference/tests and as the template's Role
+#: LOGICAL id -- no longer the role's PHYSICAL name (see module docstring).
 EXECUTION_ROLE_NAME = "CryoStackExecutionRole"
 DEFAULT_STACK_NAME = "cryostack-access"
-TEMPLATE_VERSION = "2026-09-04"
+TEMPLATE_VERSION = "2026-09-08"
+
+_STACK_NAME_MAX_LENGTH = 128
+_STACK_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 # names CryoStack provisions inside the user's account (kept in sync with
 # cryostack_src.cloud.drivers.aws.batch_config)
@@ -337,7 +368,10 @@ def execution_role_template() -> dict:
             "CryoStackExecutionRole": {
                 "Type": "AWS::IAM::Role",
                 "Properties": {
-                    "RoleName": EXECUTION_ROLE_NAME,
+                    # No RoleName -- CloudFormation generates a unique,
+                    # stack-scoped physical name so two connections (or a
+                    # retried stack) never collide on a fixed role name. The
+                    # actual ARN is always read back from Outputs.RoleArn.
                     "Description": (
                         "Assumed by CryoStack to run experiments on AWS Batch."
                     ),
@@ -368,6 +402,38 @@ def execution_role_template() -> dict:
 def render_template(*, indent: int | None = 2) -> str:
     """The template as a JSON string, ready to host at a public URL."""
     return json.dumps(execution_role_template(), indent=indent, sort_keys=False)
+
+
+# ---------------------------------------------------------------------------
+# per-connection stack naming
+# ---------------------------------------------------------------------------
+def connection_stack_name(connection_id: str, *, attempt: int = 1) -> str:
+    """A CloudFormation stack name scoped to ONE CryoStack connection --
+    never the single fixed ``DEFAULT_STACK_NAME`` every prior connection
+    shared.
+
+    ``connection_id`` (``AWSConnectionStore``'s own opaque, random
+    ``conn-<hex>`` id -- never a display name or email, per the "role/stack
+    identity follows the connection" rule) makes two different connections'
+    stacks always resolve to two different names, so a second CryoStack
+    identity -- or a genuinely new connection replacing this one -- can
+    never collide with an existing stack in the same AWS account.
+
+    ``attempt`` (from ``AWSConnection.stack_attempt``, default 1) lets the
+    SAME connection mint a fresh, non-colliding stack name without touching
+    its ExternalId or role -- the escape hatch for a previous attempt that
+    rolled back to ``ROLLBACK_COMPLETE``. An ordinary retry (page reload,
+    "Retry connection") never bumps it, so it keeps reusing the exact same
+    stack name -- and, once that stack has actually completed, the exact
+    same role.
+    """
+    slug = _STACK_SLUG_RE.sub("-", (connection_id or "").strip().lower()).strip("-")
+    if not slug:
+        raise ValueError("connection_stack_name: connection_id is required")
+    name = f"{DEFAULT_STACK_NAME}-{slug}"
+    if int(attempt or 1) > 1:
+        name = f"{name}-{int(attempt)}"
+    return name[:_STACK_NAME_MAX_LENGTH]
 
 
 # ---------------------------------------------------------------------------

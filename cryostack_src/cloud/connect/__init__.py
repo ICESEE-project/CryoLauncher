@@ -51,6 +51,7 @@ from .assume_role import (
 )
 from .cloudformation import (
     EXECUTION_ROLE_NAME,
+    connection_stack_name,
     execution_role_template,
     quick_create_url,
     render_template,
@@ -92,6 +93,7 @@ __all__ = [
     "account_id_from_role_arn",
     "assert_no_aws_secrets",
     "assume_role",
+    "connection_stack_name",
     "cryostack_principal_arn",
     "default_runs_bucket",
     "derive_cloud_defaults",

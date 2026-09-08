@@ -50,12 +50,25 @@ def test_external_id_is_a_noecho_parameter(template):
     assert param["Type"] == "String"
 
 
-def test_role_name_is_the_documented_constant(template):
-    assert (
-        template["Resources"]["CryoStackExecutionRole"]["Properties"]["RoleName"]
-        == EXECUTION_ROLE_NAME
-        == "CryoStackExecutionRole"
-    )
+def test_role_has_no_fixed_physical_name(template):
+    """WS onboarding role-name collision fix: the Role resource must NOT set
+    an explicit RoleName -- CloudFormation generates a unique, stack-scoped
+    physical name so a second connection's stack (a different CryoStack
+    identity, or a genuinely new connection replacing this one) can never
+    collide with 'Resource of type AWS::IAM::Role ... already exists'.
+    EXECUTION_ROLE_NAME remains only the template's Role LOGICAL id."""
+    props = template["Resources"]["CryoStackExecutionRole"]["Properties"]
+    assert "RoleName" not in props
+    assert "CryoStackExecutionRole" in template["Resources"]     # logical id unchanged
+    assert EXECUTION_ROLE_NAME == "CryoStackExecutionRole"
+
+
+def test_role_arn_output_is_the_real_cloudformation_created_role(template):
+    """The pasted-back RoleArn must always be Fn::GetAtt on the actual
+    resource CloudFormation created -- never a string built from a fixed
+    name -- so it is correct regardless of what physical name CFN picked."""
+    output = template["Outputs"]["RoleArn"]
+    assert output["Value"] == {"Fn::GetAtt": ["CryoStackExecutionRole", "Arn"]}
 
 
 def test_no_administrator_access_and_no_star_star(template):

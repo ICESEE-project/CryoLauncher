@@ -85,6 +85,14 @@ class AWSConnection:
     #: (containerProperties.secrets). Empty = ISSM cloud runtime not
     #: configured. See cryostack_src/cloud/matlab_license.py.
     matlab_license_secret_arn: str = ""
+    #: which CloudFormation stack NAME this connection's Quick Create URL
+    #: currently points at, scoped by cloudformation.connection_stack_name()
+    #: to (connection_id, stack_attempt) -- never a fixed name, so a second
+    #: connection can never collide with this one's stack. Starts at 1 and
+    #: is bumped ONLY by with_new_stack_attempt(), the explicit "my previous
+    #: stack rolled back, give me a fresh non-colliding name" escape hatch --
+    #: never on an ordinary retry, and never touching external_id/role_arn.
+    stack_attempt: int = 1
 
     # -- derived -----------------------------------------------------------
     @property
@@ -103,6 +111,14 @@ class AWSConnection:
         """Record the (non-secret) Secrets Manager ARN for the ISSM MATLAB
         license. ``""`` clears it. The secret VALUE is never handled here."""
         return replace(self, matlab_license_secret_arn=(secret_arn or "").strip())
+
+    def with_new_stack_attempt(self) -> "AWSConnection":
+        """Mint a fresh, non-colliding CloudFormation stack name for THIS
+        SAME connection (e.g. the previous stack rolled back to
+        ROLLBACK_COMPLETE) -- external_id, role_arn and status are
+        completely untouched, so an already-verified role keeps working and
+        an in-progress ExternalId trust relationship is not invalidated."""
+        return replace(self, stack_attempt=self.stack_attempt + 1)
 
     def mark_connected(self, *, account_id: str) -> "AWSConnection":
         return replace(
@@ -152,6 +168,7 @@ class AWSConnection:
                 # non-secret ARN only (the license value lives in the user's
                 # own Secrets Manager and never reaches CryoStack)
                 "matlab_license_secret_arn": self.matlab_license_secret_arn,
+                "stack_attempt": self.stack_attempt,
             }
         )
         return base
