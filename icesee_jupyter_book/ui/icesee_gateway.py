@@ -29,7 +29,7 @@ from icesee_jupyter_book.core.connector_relay_client import (
 
 from icesee_jupyter_book.core import ssh_key_manager
 from icesee_jupyter_book.core.example_registry import EXAMPLES, enabled_names
-from cryostack_src.workspace import resolve_workspace_user, user_run_root
+from cryostack_src.workspace import resolve_workspace_user, user_run_root, read_manifest
 from cryostack_src.resources.profiles import get_compute_profile, initial_remote_fields
 from cryostack_src.remote import RemoteBridge
 from cryostack_src.remote.access_state import (
@@ -81,6 +81,7 @@ from icesee_jupyter_book.core.cloud_bridge_adapter import (
     icesee_cloud_terminate,
     submit_icesee_cloud_run,
 )
+from cryostack_src.cloud.diagnostics import merge_aws_resources, resources_from_poll
 from icesee_jupyter_book.core.run_records import da_identity_from_params
 from cryostack_src.frontend.cryolauncher.panels.run_plan import build_run_plan_panel
 from cryostack_src.frontend.cryolauncher.workspace.run_history import (
@@ -649,6 +650,21 @@ def build_icesee_ui():
                 with log_out:
                     print("[history][WARN] could not update run history:", type(_e).__name__, _e)
                 return None
+
+        def _merge_icesee_aws_resources(run_dir_path, updates: dict) -> None:
+            """Merge ``updates`` into this run's persisted metadata['aws_resources']
+            (cryostack_src.cloud.diagnostics.merge_aws_resources: non-secret keys
+            only, never overwrites a known value with an empty one) so the
+            reused Workspace history panel's AWS-diagnostics console links work
+            for ICESEE cloud runs too -- the same pure snapshot mechanism
+            CryoLauncher's cloud runs already use."""
+            try:
+                manifest = Path(run_dir_path) / run_records.MANIFEST_NAME
+                existing = read_manifest(manifest).metadata.get("aws_resources") if manifest.is_file() else None
+            except Exception:
+                existing = None
+            merged = merge_aws_resources(existing, updates)
+            _update_icesee_run(run_dir_path, extra_metadata={"aws_resources": merged})
 
         def local_remote_cache_dir() -> Path:
             rd = run_dir(_icesee_run_dir_base(), _new_icesee_run_id())
@@ -2096,6 +2112,13 @@ def build_icesee_ui():
                     status="running", jobid=result.job_id,
                     remote_directory=result.working_directory,
                 )
+                _merge_icesee_aws_resources(_rd, {
+                    "region": aws_region.value.strip() or "us-east-1",
+                    "batch_job_id": result.job_id,
+                    "job_queue": batch_job_queue.value.strip(),
+                    "job_definition": batch_job_def.value.strip(),
+                    "s3_run": result.working_directory,
+                })
 
                 set_status("done")
                 with log_out:
@@ -2121,6 +2144,9 @@ def build_icesee_ui():
                         print("[cloud] reason:", st.reason)
                 if STATUS.get("local_run_dir"):
                     _update_icesee_run(Path(STATUS["local_run_dir"]), status=st.state)
+                    _merge_icesee_aws_resources(
+                        Path(STATUS["local_run_dir"]), resources_from_poll(st.metadata),
+                    )
             except Exception as e:
                 with log_out:
                     print("[cloud][ERROR]", type(e).__name__, e)

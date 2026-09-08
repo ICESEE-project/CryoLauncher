@@ -192,3 +192,66 @@ def test_cloud_terminate_with_no_job_id_yet_is_a_clean_noop(monkeypatch, tmp_pat
     handler()
     printed = capsys.readouterr().out
     assert "No Batch job id yet" in printed
+
+
+def test_cloud_submit_and_status_populate_aws_resources_for_the_shared_diagnostics_menu(
+    monkeypatch, tmp_path,
+):
+    """The Runs panel (build_workspace_history_panel, reused verbatim since
+    the Workspace-shell checkpoint) already renders an AWS diagnostics menu
+    from run.metadata['aws_resources'] for any run, model-agnostic. ICESEE
+    cloud runs must populate it too, growing it (never overwriting a known
+    value with an empty one) as status polls learn more."""
+    import cryostack_src.cloud.legacy.aws_batch as legacy_batch
+    from cryostack_src.workspace import read_manifest
+    from icesee_jupyter_book.core.run_records import MANIFEST_NAME
+
+    class _FakeSubprocess:
+        @staticmethod
+        def run(argv, **kwargs):
+            if "get-caller-identity" in argv:
+                return _FakeCompleted('{"Account": "1"}')
+            if "submit-job" in argv:
+                return _FakeCompleted(json.dumps({"jobId": "job-xyz"}))
+            if "describe-jobs" in argv:
+                return _FakeCompleted(json.dumps({"jobs": [{
+                    "status": "RUNNING", "statusReason": "",
+                    "container": {"logStreamName": "stream-1", "taskArn": "arn:aws:ecs:x"},
+                }]}))
+            return _FakeCompleted("")
+
+    monkeypatch.setattr(legacy_batch, "subprocess", _FakeSubprocess)
+
+    page = _build_gateway(monkeypatch, tmp_path, user="cloud-diagnostics-user")
+    _select_cloud_mode(page)
+
+    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_handler = _freevar(submit_click, "run_example_cloud_submit")
+    aws_region = _freevar(submit_handler, "aws_region")
+    cloud_bucket = _freevar(submit_handler, "cloud_bucket")
+    batch_job_queue = _freevar(submit_handler, "batch_job_queue")
+    batch_job_def = _freevar(submit_handler, "batch_job_def")
+    aws_region.value = "us-east-2"
+    cloud_bucket.value = "s3://bucket/runs"
+    batch_job_queue.value = "q"
+    batch_job_def.value = "jd"
+    submit_handler()
+
+    STATUS = _freevar(submit_handler, "STATUS")
+    manifest_path = Path(STATUS["local_run_dir"]) / MANIFEST_NAME
+    resources = read_manifest(manifest_path).metadata["aws_resources"]
+    assert resources["region"] == "us-east-2"
+    assert resources["batch_job_id"] == "job-xyz"
+    assert resources["job_queue"] == "q"
+    assert resources["job_definition"] == "jd"
+
+    status_click = _find_button(page, "Check status", icon="search")._click_handlers.callbacks[0]
+    status_handler = _freevar(status_click, "run_example_cloud_status")
+    status_handler()
+
+    resources = read_manifest(manifest_path).metadata["aws_resources"]
+    assert resources["log_stream"] == "stream-1"
+    assert resources["task_arn"] == "arn:aws:ecs:x"
+    # earlier values survive -- the merge grows the snapshot, never clobbers it
+    assert resources["batch_job_id"] == "job-xyz"
+    assert resources["job_queue"] == "q"
