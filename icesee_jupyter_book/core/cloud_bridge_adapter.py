@@ -85,6 +85,9 @@ def submit_icesee_cloud_run(
     job_queue: str,
     job_definition: str,
     job_name: str = "icesee",
+    np: int | None = None,
+    nens: int | None = None,
+    model_nprocs: int | None = None,
     run_dir_base: "Path | str | None" = None,
     run_dir_name: str | None = None,
 ) -> ExecutionResult:
@@ -93,11 +96,18 @@ def submit_icesee_cloud_run(
     ``run_dir_base``/``run_dir_name`` -- compute it the same way before
     calling this, exactly as the Local/Remote paths already do; it is not
     echoed back in ``ExecutionResult`` (CloudBackend's normalization only
-    carries the S3-side identity, by design -- it is provider-neutral)."""
+    carries the S3-side identity, by design -- it is provider-neutral).
+
+    ``np``/``nens``/``model_nprocs`` become the ``ICESEE_NP``/
+    ``ICESEE_NENS``/``ICESEE_MODEL_NPROCS`` container-override env vars a
+    real ICESEE Batch entrypoint would read to run the same ``mpirun -np
+    NP ...`` command Remote already runs (see MAX_SINGLE_TASK_MPI_RANKS in
+    cloud_runner.py for the single-Fargate-task ceiling this maps onto)."""
     return bridge.submit(
         example_name=example_name, example_cfg=example_cfg, config=config,
         s3_prefix=s3_prefix, job_queue=job_queue, job_definition=job_definition,
-        job_name=job_name, run_dir_base=run_dir_base, run_dir_name=run_dir_name,
+        job_name=job_name, np=np, nens=nens, model_nprocs=model_nprocs,
+        run_dir_base=run_dir_base, run_dir_name=run_dir_name,
     )
 
 

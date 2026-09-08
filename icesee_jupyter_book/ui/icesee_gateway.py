@@ -2137,6 +2137,13 @@ def build_icesee_ui():
                     job_queue=job_queue,
                     job_definition=job_definition,
                     job_name=(batch_job_name.value.strip() or "icesee"),
+                    # the same NP/Nens/model_nprocs contract Remote's own
+                    # SLURM template unconditionally threads into mpirun --
+                    # a real ICESEE Batch entrypoint reads these to launch
+                    # the identical command (see MAX_SINGLE_TASK_MPI_RANKS).
+                    np=int(cluster_mpi_np.value),
+                    nens=int(ens_sl.value),
+                    model_nprocs=int(cluster_model_nprocs.value),
                     run_dir_base=_icesee_run_dir_base(),
                     run_dir_name=_run_id,
                 )

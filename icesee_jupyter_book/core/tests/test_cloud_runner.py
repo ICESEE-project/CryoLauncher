@@ -28,10 +28,12 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from icesee_jupyter_book.core.cloud_runner import (
+    MAX_SINGLE_TASK_MPI_RANKS,
     AWSBatchConfig,
     aws_batch_status,
     aws_batch_submit,
     aws_test,
+    build_icesee_container_env,
     submit_cloud_example,
     terminate_cloud_job,
 )
@@ -202,3 +204,73 @@ def test_terminate_cloud_job_reaches_the_batch_call_with_credentials(monkeypatch
     # BYO credentials reached the subprocess env, not a profile
     assert cancel_call["env"]["AWS_ACCESS_KEY_ID"] == "a"
     assert "AWS_PROFILE" not in cancel_call["env"]
+
+
+# ── MPI-aware container overrides ────────────────────────────────────────
+def test_build_icesee_container_env_carries_the_mpirun_contract():
+    env = build_icesee_container_env(
+        s3_run="s3://bucket/prefix/r1", example_name="lorenz96",
+        run_script_name="run_da_lorenz96.py", np=8, nens=20, model_nprocs=2,
+    )
+    by_name = {e["name"]: e["value"] for e in env}
+    assert by_name["ICESEE_S3_RUN"] == "s3://bucket/prefix/r1"
+    assert by_name["ICESEE_EXAMPLE"] == "lorenz96"
+    assert by_name["ICESEE_RUN_SCRIPT"] == "run_da_lorenz96.py"
+    assert by_name["ICESEE_NP"] == "8"
+    assert by_name["ICESEE_NENS"] == "20"
+    assert by_name["ICESEE_MODEL_NPROCS"] == "2"
+
+
+def test_build_icesee_container_env_omits_mpi_vars_when_not_supplied():
+    """Never fabricated: a caller that has no MPI parameters (np=None) gets
+    exactly the three identity env vars, nothing invented."""
+    env = build_icesee_container_env(
+        s3_run="s3://bucket/prefix/r1", example_name="lorenz96",
+        run_script_name="run_da_lorenz96.py",
+    )
+    names = {e["name"] for e in env}
+    assert names == {"ICESEE_S3_RUN", "ICESEE_EXAMPLE", "ICESEE_RUN_SCRIPT"}
+
+
+def test_aws_batch_submit_threads_mpi_params_into_the_real_submission(tmp_path):
+    (tmp_path / "params.yaml").write_text("a: 1\n")
+    fake = _FakeAWS(responses=[
+        (0, "", ""), (0, "", ""),
+        (0, json.dumps({"jobId": "job-mpi"}), ""),
+    ])
+    cfg = AWSBatchConfig(
+        region="us-east-2", s3_prefix="s3://bucket/prefix",
+        job_queue="q", job_definition="jd",
+    )
+    aws_batch_submit(
+        cfg, tmp_path, "lorenz96", "run_da_lorenz96.py",
+        np=8, nens=20, model_nprocs=2, aws=fake,
+    )
+    submit_call = fake.calls[-1][1]
+    overrides = json.loads(submit_call[submit_call.index("--container-overrides") + 1])
+    env = {e["name"]: e["value"] for e in overrides["environment"]}
+    assert env["ICESEE_NP"] == "8" and env["ICESEE_NENS"] == "20"
+    assert env["ICESEE_MODEL_NPROCS"] == "2"
+
+
+def test_submit_cloud_example_warns_when_np_exceeds_the_single_task_ceiling(tmp_path, monkeypatch):
+    example_dir = tmp_path / "ex"
+    example_dir.mkdir()
+    (example_dir / "run.py").write_text("# entry\n")
+    monkeypatch.setattr(
+        "icesee_jupyter_book.core.cloud_runner.find_run_script",
+        lambda cfg: example_dir / "run.py",
+    )
+    fake = _FakeAWS(responses=[
+        (0, "{}", ""), (0, "", ""), (0, "", ""),
+        (0, json.dumps({"jobId": "job-big"}), ""),
+    ])
+    result = submit_cloud_example(
+        example_name="big-ensemble", example_cfg={}, config={},
+        region="us-east-2", profile=None,
+        s3_prefix="s3://bucket/runs", job_queue="q", job_definition="jd",
+        job_name="icesee", np=MAX_SINGLE_TASK_MPI_RANKS + 4, nens=64,
+        model_nprocs=1, run_dir_base=tmp_path / "runs", run_dir_name="r1",
+        aws=fake,
+    )
+    assert any("exceeds" in m and "Fargate" in m for m in result.messages)

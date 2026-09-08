@@ -80,12 +80,60 @@ def aws_test(cfg: AWSBatchConfig, *, aws=None) -> None:
         raise RuntimeError(err or out)
 
 
+#: AWS Fargate's own vCPU ceiling for a single Batch task
+#: (cryostack_src/cloud/drivers/aws/batch_config.py::DEFAULT_MAX_VCPUS /
+#: _FARGATE_MEMORY_RULES, which stops at "16"). ICESEE's real parallel
+#: contract (icesee_jupyter_book/core/remote_runner.py's SLURM template) is
+#: a single `mpirun -np NP ...` launch -- one co-located process group, not
+#: a multi-node topology -- so it maps correctly onto ONE Fargate task for
+#: any NP within this ceiling. Beyond it, Fargate cannot run a multi-node/
+#: co-scheduled MPI job at all; that is a genuine infrastructure limit, not
+#: something this function works around.
+MAX_SINGLE_TASK_MPI_RANKS = 16
+
+
+def build_icesee_container_env(
+    *,
+    s3_run: str,
+    example_name: str,
+    run_script_name: str,
+    np: int | None = None,
+    nens: int | None = None,
+    model_nprocs: int | None = None,
+) -> list[dict]:
+    """The AWS Batch ``containerOverrides.environment`` list for an ICESEE
+    cloud run -- the same three identity env vars as before
+    (``ICESEE_S3_RUN``/``ICESEE_EXAMPLE``/``ICESEE_RUN_SCRIPT``), plus the
+    MPI/ensemble parameters (``ICESEE_NP``/``ICESEE_NENS``/
+    ``ICESEE_MODEL_NPROCS``) a real ICESEE Batch entrypoint would read to
+    run the exact same ``mpirun -np "$ICESEE_NP" python "$ICESEE_RUN_SCRIPT"
+    -F params.yaml --Nens="$ICESEE_NENS"
+    --model_nprocs="$ICESEE_MODEL_NPROCS"`` command Remote already runs.
+    MPI env vars are only added when a value is actually supplied (``None``
+    -- e.g. a serial example -- adds nothing), never fabricated."""
+    env = [
+        {"name": "ICESEE_S3_RUN", "value": s3_run},
+        {"name": "ICESEE_EXAMPLE", "value": example_name},
+        {"name": "ICESEE_RUN_SCRIPT", "value": run_script_name},
+    ]
+    if np is not None:
+        env.append({"name": "ICESEE_NP", "value": str(np)})
+    if nens is not None:
+        env.append({"name": "ICESEE_NENS", "value": str(nens)})
+    if model_nprocs is not None:
+        env.append({"name": "ICESEE_MODEL_NPROCS", "value": str(model_nprocs)})
+    return env
+
+
 def aws_batch_submit(
     cfg: AWSBatchConfig,
     local_run_dir: Path,
     example_name: str,
     run_script_name: str,
     *,
+    np: int | None = None,
+    nens: int | None = None,
+    model_nprocs: int | None = None,
     aws=None,
 ) -> dict:
     if not cfg.s3_prefix or not cfg.job_queue or not cfg.job_definition:
@@ -114,11 +162,10 @@ def aws_batch_submit(
         aws=aws,
     )
 
-    env = [
-        {"name": "ICESEE_S3_RUN", "value": s3_run},
-        {"name": "ICESEE_EXAMPLE", "value": example_name},
-        {"name": "ICESEE_RUN_SCRIPT", "value": run_script_name},
-    ]
+    env = build_icesee_container_env(
+        s3_run=s3_run, example_name=example_name, run_script_name=run_script_name,
+        np=np, nens=nens, model_nprocs=model_nprocs,
+    )
 
     submit_args = [
         "batch",
@@ -181,6 +228,9 @@ def submit_cloud_example(
     job_definition: str,
     job_name: str,
     credentials: dict[str, str] | None = None,
+    np: int | None = None,
+    nens: int | None = None,
+    model_nprocs: int | None = None,
     run_dir_base: "Path | str | None" = None,
     run_dir_name: str | None = None,
     aws=None,
@@ -199,7 +249,10 @@ def submit_cloud_example(
     )
 
     aws_test(cfg, aws=aws)
-    resp = aws_batch_submit(cfg, rd, example_name, find_run_script(example_cfg).name, aws=aws)
+    resp = aws_batch_submit(
+        cfg, rd, example_name, find_run_script(example_cfg).name,
+        np=np, nens=nens, model_nprocs=model_nprocs, aws=aws,
+    )
 
     messages = [
         "[cloud] Submitted.",
@@ -210,6 +263,13 @@ def submit_cloud_example(
         "Your AWS Batch container must read ICESEE_S3_RUN and ICESEE_RUN_SCRIPT,",
         "download params.yaml from S3, run, then sync results back to S3.",
     ]
+    if np is not None and np > MAX_SINGLE_TASK_MPI_RANKS:
+        messages.append(
+            f"[warning] ICESEE_NP={np} exceeds this codebase's single-Fargate-task "
+            f"ceiling ({MAX_SINGLE_TASK_MPI_RANKS} vCPUs) -- AWS Batch on Fargate "
+            "cannot run a multi-node MPI job; a real ICESEE Batch job definition "
+            "would need an EC2-backed compute environment for this ensemble size."
+        )
 
     return CloudSubmitResult(
         success=True,

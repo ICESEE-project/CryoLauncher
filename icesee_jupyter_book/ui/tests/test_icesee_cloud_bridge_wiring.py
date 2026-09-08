@@ -255,3 +255,55 @@ def test_cloud_submit_and_status_populate_aws_resources_for_the_shared_diagnosti
     # earlier values survive -- the merge grows the snapshot, never clobbers it
     assert resources["batch_job_id"] == "job-xyz"
     assert resources["job_queue"] == "q"
+
+
+def test_cloud_submit_threads_mpi_ensemble_params_into_the_container_env(
+    monkeypatch, tmp_path,
+):
+    """Same NP/Nens/model_nprocs contract Remote's SLURM template
+    unconditionally threads into mpirun -- sourced from the SAME widgets
+    Remote already exposes, no new UI."""
+    import cryostack_src.cloud.legacy.aws_batch as legacy_batch
+
+    calls = []
+
+    class _FakeSubprocess:
+        @staticmethod
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if "get-caller-identity" in argv:
+                return _FakeCompleted('{"Account": "1"}')
+            if "submit-job" in argv:
+                return _FakeCompleted(json.dumps({"jobId": "job-mpi"}))
+            return _FakeCompleted("")
+
+    monkeypatch.setattr(legacy_batch, "subprocess", _FakeSubprocess)
+
+    page = _build_gateway(monkeypatch, tmp_path, user="cloud-mpi-user")
+    _select_cloud_mode(page)
+    submit_click = _find_button(page, "Submit")._click_handlers.callbacks[0]
+    submit_handler = _freevar(submit_click, "run_example_cloud_submit")
+
+    aws_region = _freevar(submit_handler, "aws_region")
+    cloud_bucket = _freevar(submit_handler, "cloud_bucket")
+    batch_job_queue = _freevar(submit_handler, "batch_job_queue")
+    batch_job_def = _freevar(submit_handler, "batch_job_def")
+    cluster_mpi_np = _freevar(submit_handler, "cluster_mpi_np")
+    cluster_model_nprocs = _freevar(submit_handler, "cluster_model_nprocs")
+    ens_sl = _freevar(submit_handler, "ens_sl")
+    aws_region.value = "us-east-2"
+    cloud_bucket.value = "s3://bucket/runs"
+    batch_job_queue.value = "q"
+    batch_job_def.value = "jd"
+    cluster_mpi_np.value = 8
+    cluster_model_nprocs.value = 2
+    ens_sl.value = 20
+
+    submit_handler()
+
+    submit_call = next(c for c in calls if "submit-job" in c)
+    overrides = json.loads(submit_call[submit_call.index("--container-overrides") + 1])
+    env = {e["name"]: e["value"] for e in overrides["environment"]}
+    assert env["ICESEE_NP"] == "8"
+    assert env["ICESEE_MODEL_NPROCS"] == "2"
+    assert env["ICESEE_NENS"] == "20"
