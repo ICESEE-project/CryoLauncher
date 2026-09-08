@@ -41,7 +41,10 @@ def test_registry_entry_is_the_combined_image_with_verified_digest():
     img = get_tested_image(_KEY)
     assert img.reference == _REF
     assert img.digest == _DIGEST
-    assert img.models == ("issm", "icepack")
+    # "icesee" added 2026-09-08 after live local verification (with-icesee,
+    # `mpirun --allow-run-as-root -np 1 ... run_da_lorenz96.py` end-to-end)
+    assert img.models == ("issm", "icepack", "icesee")
+    assert img.supports("icesee")
     assert img.stack_profile == "tested"
 
 

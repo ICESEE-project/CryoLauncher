@@ -74,7 +74,23 @@ TESTED_IMAGES: dict[str, TestedImage] = {
         label="ICESEE Combined v1.0.1",
         reference="bkyanjo/icesee-combined:v1.0.1",
         digest="sha256:e393b1eed21f3481fffcfb3bb7ce5ce315fbff0cc8dc0fe4f2bcc2e2f1d538ed",
-        models=("issm", "icepack"),
+        # "icesee" added 2026-09-08 after live verification: this exact
+        # digest was pulled and run locally with `with-icesee`; `import
+        # ICESEE`/mpi4py/h5py all succeed and the Lorenz-96 example
+        # (applications/lorenz_model/examples/lorenz96) completed end-to-end
+        # with real output (results/true-wrong-lorenz.h5 +
+        # _modelrun_datasets/*.h5) under
+        # `mpirun --allow-run-as-root -np 1 python run_da_lorenz96.py
+        # -F params.yaml --Nens=N --model_nprocs=M --verbose`. Only
+        # single-rank (NP=1) execution is verified -- NP>1 races on shared
+        # HDF5 output files in this runtime/example (see
+        # icesee_jupyter_book/core/cloud_runner.py's ICESEE batch runner,
+        # which refuses ICESEE_NP != 1 rather than silently corrupting a
+        # run) and full/partial parallel modes fail outright (h5py in this
+        # image has no MPI I/O support; the partial-parallel path has an
+        # unrelated example-config bug). This claim covers only that real,
+        # verified capability, not multi-rank ICESEE execution.
+        models=("issm", "icepack", "icesee"),
         components={
             # unchanged from v1.0.0 -- this release ONLY adds the AWS CLI
             # (cloud S3 input/output sync); no scientific-stack layer was

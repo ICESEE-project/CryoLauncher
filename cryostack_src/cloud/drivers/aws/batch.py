@@ -61,6 +61,7 @@ class AWSBatchResources:
 
     issm_job_definition: str | None = None
     icepack_job_definition: str | None = None
+    icesee_job_definition: str | None = None
 
     missing: list[str] | None = None
 
@@ -270,6 +271,15 @@ def discover_batch_resources(
         ],
     )
 
+    icesee_definition = _find_named_resource(
+        job_definitions,
+        field="jobDefinitionName",
+        names=[
+            JOB_DEFINITION_NAMES["icesee"],
+            "icesee",
+        ],
+    )
+
     missing: list[str] = []
 
     if not compute:
@@ -290,6 +300,11 @@ def discover_batch_resources(
     if not icepack_definition:
         missing.append(
             "icepack_job_definition"
+        )
+
+    if not icesee_definition:
+        missing.append(
+            "icesee_job_definition"
         )
 
     return AWSBatchResources(

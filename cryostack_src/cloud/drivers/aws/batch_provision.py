@@ -81,6 +81,9 @@ class AWSBatchProvisionResult:
     #: same, for the Icepack tested-image delivery when requested
     #: (``include_icepack=True``); ``None`` when Icepack wasn't prepared.
     icepack_image_delivery: object | None = None
+    #: same, for the ICESEE tested-image delivery when requested
+    #: (``include_icesee=True``); ``None`` when ICESEE wasn't prepared.
+    icesee_image_delivery: object | None = None
 
 
 def _require_success(code: int, stdout: str, stderr: str, *, what: str) -> str:
@@ -438,6 +441,10 @@ def ensure_batch_resources(
     include_icepack: bool = False,
     icepack_image: str | None = None,
     icepack_job_config: FargateJobConfig | None = None,
+    include_icesee: bool = False,
+    icesee_image: str | None = None,
+    icesee_job_config: FargateJobConfig | None = None,
+    icesee_command: list[str] | None = None,
     ready_interval: float = BATCH_READY_INTERVAL_SECONDS,
     ready_timeout: float = BATCH_READY_TIMEOUT_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
@@ -499,6 +506,25 @@ def ensure_batch_resources(
         else:
             result.skipped.append(
                 "icepack_job_definition (needs job role, execution role and an image)")
+
+    if include_icesee:
+        if job_role_arn and execution_role_arn and icesee_image:
+            result.log_groups.append(ensure_log_group(config, model="icesee"))
+            _bucket("icesee_job_definition", ensure_job_definition(
+                config, model="icesee", image=icesee_image, job_role_arn=job_role_arn,
+                execution_role_arn=execution_role_arn, region=config.region,
+                job_config=icesee_job_config or DEFAULT_ISSM_JOB_CONFIG,
+                # ICESEE is not one of cryostack_src.cloud.runtime's
+                # SUPPORTED_CLOUD_MODELS and never shares the generic
+                # `job_command` (CRYOSTACK_* env contract) ISSM/Icepack use --
+                # it needs its own ICESEE_* env-var-driven command, passed in
+                # by the caller (icesee_jupyter_book.core.cloud_runner's
+                # icesee_batch_command()).
+                command=icesee_command,
+            ))
+        else:
+            result.skipped.append(
+                "icesee_job_definition (needs job role, execution role and an image)")
 
     result.resources = discover_batch_resources(config)
     return result

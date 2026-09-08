@@ -51,9 +51,11 @@ class AWSRegistryResources:
 
     issm_repository: str | None = None
     icepack_repository: str | None = None
+    icesee_repository: str | None = None
 
     issm_repository_uri: str | None = None
     icepack_repository_uri: str | None = None
+    icesee_repository_uri: str | None = None
 
     missing: list[str] | None = None
 
@@ -167,6 +169,14 @@ def discover_registry_resources(
         ],
     )
 
+    icesee = find_repository(
+        repositories,
+        [
+            "cryostack-icesee",
+            "icesee",
+        ],
+    )
+
     missing: list[str] = []
 
     if not issm:
@@ -177,6 +187,11 @@ def discover_registry_resources(
     if not icepack:
         missing.append(
             "icepack_repository"
+        )
+
+    if not icesee:
+        missing.append(
+            "icesee_repository"
         )
 
     return AWSRegistryResources(
@@ -195,6 +210,13 @@ def discover_registry_resources(
             if icepack
             else None
         ),
+        icesee_repository=(
+            icesee.get(
+                "repositoryName"
+            )
+            if icesee
+            else None
+        ),
         issm_repository_uri=(
             issm.get(
                 "repositoryUri"
@@ -207,6 +229,13 @@ def discover_registry_resources(
                 "repositoryUri"
             )
             if icepack
+            else None
+        ),
+        icesee_repository_uri=(
+            icesee.get(
+                "repositoryUri"
+            )
+            if icesee
             else None
         ),
         missing=missing,

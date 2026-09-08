@@ -296,3 +296,78 @@ def test_sync_cloud_outputs_raises_on_failure(tmp_path):
     fake = _FakeAWS(responses=[(1, "", "access denied")])
     with pytest.raises(RuntimeError, match="access denied"):
         sync_cloud_outputs(AWSBatchConfig(), "s3://bucket/runs/r1", tmp_path, aws=fake)
+
+
+# ── ICESEE Batch job-definition entrypoint ───────────────────────────────
+# Verified 2026-09-08 against the exact pulled/digest-matched image
+# bkyanjo/icesee-combined:v1.0.1: `with-icesee` activates, `import ICESEE`/
+# mpi4py/h5py all succeed, and `mpirun --allow-run-as-root -np 1 python
+# run_da_lorenz96.py -F params.yaml --Nens=N --model_nprocs=M --verbose`
+# completed end-to-end with real output. NP>1 was tried and found unsafe
+# (HDF5 races silently swallowed to exit 0; the true parallel modes either
+# crash -- no MPI-enabled h5py -- or hit an unrelated example bug) -- these
+# tests are static/string-level (no Docker, no AWS) proving the *runner
+# script* honestly encodes what was actually verified, not a live rerun of
+# the container.
+def test_icesee_batch_command_is_bash_dash_c_shape():
+    from icesee_jupyter_book.core.cloud_runner import icesee_batch_command
+
+    cmd = icesee_batch_command()
+    assert cmd[:2] == ["bash", "-c"]
+    assert len(cmd) == 3
+
+
+def test_icesee_runner_reads_the_established_env_var_contract():
+    from icesee_jupyter_book.core.cloud_runner import build_icesee_batch_runner
+
+    script = build_icesee_batch_runner()
+    for var in (
+        "ICESEE_S3_RUN", "ICESEE_EXAMPLE", "ICESEE_RUN_SCRIPT",
+        "ICESEE_NP", "ICESEE_NENS", "ICESEE_MODEL_NPROCS",
+    ):
+        assert var in script
+
+
+def test_icesee_runner_uses_with_icesee_and_allow_run_as_root():
+    from icesee_jupyter_book.core.cloud_runner import build_icesee_batch_runner
+
+    script = build_icesee_batch_runner()
+    assert "with-icesee mpirun --allow-run-as-root" in script
+    assert "-F" in script and "--Nens=" in script and "--model_nprocs=" in script
+
+
+def test_icesee_runner_refuses_unverified_np():
+    from icesee_jupyter_book.core.cloud_runner import (
+        ICESEE_VERIFIED_MAX_NP,
+        build_icesee_batch_runner,
+    )
+
+    assert ICESEE_VERIFIED_MAX_NP == 1
+    script = build_icesee_batch_runner()
+    assert 'if [ "${NP}" != "1" ]; then' in script
+    assert "not verified for cloud execution" in script
+
+
+def test_icesee_runner_only_knows_the_one_verified_example():
+    from icesee_jupyter_book.core.cloud_runner import (
+        ICESEE_VERIFIED_EXAMPLES,
+        build_icesee_batch_runner,
+    )
+
+    assert ICESEE_VERIFIED_EXAMPLES == {
+        "lorenz96": "/opt/ICESEE/applications/lorenz_model/examples/lorenz96",
+    }
+    script = build_icesee_batch_runner()
+    for name, path in ICESEE_VERIFIED_EXAMPLES.items():
+        assert name in script and path in script
+    assert "unverified ICESEE example" in script
+
+
+def test_icesee_runner_syncs_params_in_and_results_out():
+    from icesee_jupyter_book.core.cloud_runner import build_icesee_batch_runner
+
+    script = build_icesee_batch_runner()
+    assert "aws s3 cp \"${ICESEE_S3_RUN}/params.yaml\"" in script
+    assert "aws s3 sync \"${EXAMPLE_DIR}/results/\"" in script
+    assert "aws s3 sync \"${EXAMPLE_DIR}/_modelrun_datasets/\"" in script
+    assert 'exit "${rc}"' in script

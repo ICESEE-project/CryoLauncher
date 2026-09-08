@@ -191,12 +191,13 @@ def ensure_registry_resources(
     config: AWSConfig,
     *,
     include_icepack: bool = False,
+    include_icesee: bool = False,
 ) -> AWSRegistryProvisionResult:
     """
     Ensure CryoStack model repositories exist in ECR.
 
-    ISSM is currently required for cloud parity. Icepack can be
-    provisioned at the same time when requested.
+    ISSM is currently required for cloud parity. Icepack and ICESEE can
+    each be provisioned at the same time when requested.
     """
 
     created: list[str] = []
@@ -209,6 +210,11 @@ def ensure_registry_resources(
     if include_icepack:
         required.append(
             ECR_REPOSITORY_NAMES["icepack"]
+        )
+
+    if include_icesee:
+        required.append(
+            ECR_REPOSITORY_NAMES["icesee"]
         )
 
     for repository_name in required:

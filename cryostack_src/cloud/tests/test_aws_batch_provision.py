@@ -367,6 +367,73 @@ def test_include_icepack_missing_image_skips_only_icepack(aws):
     assert aws.count("batch", "register-job-definition") == 1
 
 
+# -- ICESEE Cloud Execution checkpoint ------------------------------------
+# ICESEE's tested image + local runtime verification (2026-09-08) proved
+# `with-icesee` + `mpirun --allow-run-as-root -np 1 ...` runs the Lorenz-96
+# example end-to-end; this provisioning support follows the exact same
+# idempotent describe-before-create pattern already proven for Icepack
+# above, using ICESEE's own env-var-driven command instead of the shared
+# ISSM/Icepack ``job_command``.
+ICESEE_IMAGE = "123456789012.dkr.ecr.us-east-2.amazonaws.com/cryostack-icesee:tested"
+ICESEE_COMMAND = ["bash", "-c", "echo icesee-runner"]
+
+
+def test_include_icesee_provisions_its_own_job_definition_and_log_group(aws):
+    result = _provision(include_icesee=True, icesee_image=ICESEE_IMAGE,
+                         icesee_command=ICESEE_COMMAND)
+    assert set(result.created) == {
+        "compute_environment", "job_queue",
+        "issm_job_definition", "icesee_job_definition"}
+    assert set(result.log_groups) == {
+        "/cryostack/batch/issm", "/cryostack/batch/icesee"}
+    assert aws.count("batch", "register-job-definition") == 2
+    images = {jd["containerProperties"]["image"] for jd in aws.job_defs}
+    assert images == {IMAGE, ICESEE_IMAGE}
+    icesee_jd = next(
+        jd for jd in aws.job_defs if jd["jobDefinitionName"] == "cryostack-icesee")
+    assert icesee_jd["containerProperties"]["command"] == ICESEE_COMMAND
+
+
+def test_include_icesee_is_idempotent_on_a_second_prepare(aws):
+    first = _provision(include_icesee=True, icesee_image=ICESEE_IMAGE,
+                        icesee_command=ICESEE_COMMAND)
+    assert "icesee_job_definition" in first.created
+
+    second = _provision(include_icesee=True, icesee_image=ICESEE_IMAGE,
+                         icesee_command=ICESEE_COMMAND)
+    assert "issm_job_definition" in second.reused
+    assert "icesee_job_definition" in second.reused
+    assert aws.count("batch", "register-job-definition") == 2   # no new revisions
+
+
+def test_include_icesee_missing_image_skips_only_icesee(aws):
+    """ISSM must never be blocked by ICESEE's delivery being unready."""
+    result = _provision(include_icesee=True, icesee_image=None,
+                         icesee_command=ICESEE_COMMAND)
+    assert "issm_job_definition" in result.created
+    assert any("icesee_job_definition" in s for s in result.skipped)
+    assert aws.count("batch", "register-job-definition") == 1
+
+
+def test_include_icesee_and_icepack_together_are_independent(aws):
+    """Icepack and ICESEE can both be requested at once; neither blocks the
+    other, and each gets its own job definition/log group/command."""
+    result = _provision(
+        include_icepack=True, icepack_image=ICEPACK_IMAGE,
+        include_icesee=True, icesee_image=ICESEE_IMAGE, icesee_command=ICESEE_COMMAND,
+    )
+    assert set(result.created) == {
+        "compute_environment", "job_queue", "issm_job_definition",
+        "icepack_job_definition", "icesee_job_definition"}
+    assert aws.count("batch", "register-job-definition") == 3
+    icepack_jd = next(
+        jd for jd in aws.job_defs if jd["jobDefinitionName"] == "cryostack-icepack")
+    icesee_jd = next(
+        jd for jd in aws.job_defs if jd["jobDefinitionName"] == "cryostack-icesee")
+    assert icepack_jd["containerProperties"]["command"] == ["cryostack-run"]
+    assert icesee_jd["containerProperties"]["command"] == ICESEE_COMMAND
+
+
 # ── driver end to end: digest pin, one revision, idempotent second run ──
 def test_prepare_batch_pins_digest_and_makes_exactly_one_revision(aws, monkeypatch):
     from types import SimpleNamespace

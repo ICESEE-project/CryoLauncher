@@ -187,6 +187,119 @@ def aws_batch_submit(
     return {"run_id": run_id, "batch_job_id": job_id, "s3_run": s3_run}
 
 
+#: In-image example -> absolute runtime directory, for examples whose
+#: cloud execution has actually been verified end-to-end (2026-09-08,
+#: bkyanjo/icesee-combined:v1.0.1, digest
+#: sha256:e393b1eed21f3481fffcfb3bb7ce5ce315fbff0cc8dc0fe4f2bcc2e2f1d538ed):
+#: pulled, `with-icesee` activated, `import ICESEE`/mpi4py/h5py all
+#: succeeded, and `mpirun --allow-run-as-root -np 1 python
+#: run_da_lorenz96.py -F params.yaml --Nens=N --model_nprocs=M --verbose`
+#: ran to completion with real output
+#: (results/true-wrong-lorenz.h5 + _modelrun_datasets/*.h5). An example not
+#: listed here has no verified cloud path yet -- the runner below refuses
+#: it by name rather than guessing a path that was never actually run.
+ICESEE_VERIFIED_EXAMPLES: dict[str, str] = {
+    "lorenz96": "/opt/ICESEE/applications/lorenz_model/examples/lorenz96",
+}
+
+#: Only single-rank (NP=1) execution is verified. NP>1 was tried against
+#: the same image/example and found unsafe: the default (serial) execution
+#: mode has no MPI-rank coordination, so every rank redundantly regenerates
+#: the same shared HDF5 files and races on them (BlockingIOError), while
+#: the top-level exception handler in ICESEE.src.run_model_da.run_models_da
+#: swallows the failure and exits 0 -- a false success. The genuinely
+#: parallel modes (execution_mode 1 "partial"/2 "full" in params.yaml) were
+#: also tried: "full" hard-crashes because this image's h5py has no MPI I/O
+#: support (`driver='mpio'` -> "h5py was built without MPI support"), and
+#: "partial" hits an unrelated example/config bug
+#: (icesee_get_index: object of type 'NoneType' has no len()) -- neither is
+#: a container defect this runner can work around. Rather than silently
+#: accept a value that is known to race or crash, the runner below refuses
+#: any ICESEE_NP != 1 outright.
+ICESEE_VERIFIED_MAX_NP = 1
+
+_ICESEE_RUNNER = r"""#!/usr/bin/env bash
+# =====================================================================
+# ICESEE cloud runner  (auto-generated -- do not edit)
+# =====================================================================
+set -uo pipefail
+
+log()  { printf '[icesee-cloud] %s\n' "$*" >&2; }
+fail() { log "ERROR ($1): $2"; exit "$1"; }
+
+: "${ICESEE_S3_RUN:?ICESEE_S3_RUN is required}"
+: "${ICESEE_EXAMPLE:?ICESEE_EXAMPLE is required}"
+: "${ICESEE_RUN_SCRIPT:?ICESEE_RUN_SCRIPT is required}"
+NP="${ICESEE_NP:-1}"
+NENS="${ICESEE_NENS:-1}"
+MODEL_NPROCS="${ICESEE_MODEL_NPROCS:-0}"
+WORKDIR="${ICESEE_WORKDIR:-/tmp/icesee/run}"
+
+command -v aws >/dev/null 2>&1 || fail 3 "the batch container has no 'aws' CLI (needed for S3 I/O)"
+
+if [ "${NP}" != "1" ]; then
+  fail 65 "ICESEE_NP=${NP} is not verified for cloud execution -- only single-rank (ICESEE_NP=1) runs have been verified end-to-end against this runtime; multi-rank runs race on shared HDF5 output files (or crash: h5py in this image has no MPI I/O support) and are refused rather than silently producing wrong results"
+fi
+
+case "${ICESEE_EXAMPLE}" in
+  lorenz96)
+    EXAMPLE_DIR="/opt/ICESEE/applications/lorenz_model/examples/lorenz96"
+    ;;
+  *)
+    fail 64 "unverified ICESEE example: ${ICESEE_EXAMPLE} (only lorenz96 has a verified cloud runtime path)"
+    ;;
+esac
+
+SCRIPT="${EXAMPLE_DIR}/${ICESEE_RUN_SCRIPT}"
+[ -f "${SCRIPT}" ] || fail 66 "run script not found in the image: ${SCRIPT}"
+
+log "phase 1/3  fetch  ${ICESEE_S3_RUN}/params.yaml  ->  ${WORKDIR}"
+mkdir -p "${WORKDIR}" || fail 4 "cannot create ${WORKDIR}"
+aws s3 cp "${ICESEE_S3_RUN}/params.yaml" "${WORKDIR}/params.yaml" --only-show-errors \
+    || fail 4 "params.yaml download failed"
+
+log "phase 2/3  run  example=${ICESEE_EXAMPLE} np=${NP} nens=${NENS} model_nprocs=${MODEL_NPROCS}"
+with-icesee mpirun --allow-run-as-root -np "${NP}" python "${SCRIPT}" \
+    -F "${WORKDIR}/params.yaml" --Nens="${NENS}" --model_nprocs="${MODEL_NPROCS}" --verbose
+rc=$?
+log "model runtime exit code: ${rc}"
+
+log "phase 3/3  sync  outputs  ->  ${ICESEE_S3_RUN}/outputs/"
+if [ -d "${EXAMPLE_DIR}/results" ]; then
+  aws s3 sync "${EXAMPLE_DIR}/results/" "${ICESEE_S3_RUN}/outputs/results/" --only-show-errors \
+      || log "WARNING: results output sync failed (model rc=${rc})"
+fi
+if [ -d "${EXAMPLE_DIR}/_modelrun_datasets" ]; then
+  aws s3 sync "${EXAMPLE_DIR}/_modelrun_datasets/" "${ICESEE_S3_RUN}/outputs/_modelrun_datasets/" --only-show-errors \
+      || log "WARNING: dataset output sync failed (model rc=${rc})"
+fi
+
+exit "${rc}"
+"""
+
+
+def build_icesee_batch_runner() -> str:
+    """The ICESEE Batch job-definition entrypoint script -- reads the exact
+    ``ICESEE_S3_RUN``/``ICESEE_EXAMPLE``/``ICESEE_RUN_SCRIPT``/``ICESEE_NP``/
+    ``ICESEE_NENS``/``ICESEE_MODEL_NPROCS`` contract
+    :func:`build_icesee_container_env` already produces, and runs the same
+    ``with-icesee`` + ``mpirun`` command shape verified locally against
+    ``bkyanjo/icesee-combined:v1.0.1`` (2026-09-08). See
+    :data:`ICESEE_VERIFIED_EXAMPLES` / :data:`ICESEE_VERIFIED_MAX_NP` for
+    what that verification actually covered."""
+    return _ICESEE_RUNNER
+
+
+def icesee_batch_command() -> list[str]:
+    """The AWS Batch job-definition ``command`` that runs the ICESEE
+    runner -- the same ``["bash", "-c", <script>]`` shape as CryoStack's own
+    generic cloud runner (``cryostack_src.cloud.runtime.cloud_run_command``),
+    kept as a separate function/script because ICESEE is not one of
+    ``cryostack_src.cloud.runtime.SUPPORTED_CLOUD_MODELS`` and uses its own
+    env-var contract, never the generic ``CRYOSTACK_*`` one."""
+    return ["bash", "-c", build_icesee_batch_runner()]
+
+
 def aws_batch_status(cfg: AWSBatchConfig, job_id: str, *, aws=None) -> dict:
     code, out, err = _run(cfg, ["batch", "describe-jobs", "--jobs", job_id], aws=aws)
     if code != 0:
