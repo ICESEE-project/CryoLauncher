@@ -71,14 +71,16 @@ from icesee_jupyter_book.core.remote_runner import (
     connector_get_public_key,
     RemoteSubmitResult,
 )
-from icesee_jupyter_book.core.cloud_runner import (
-    AWSBatchConfig,
-    aws_batch_status,
-    submit_cloud_example,
-)
 from icesee_jupyter_book.core import run_records
 from icesee_jupyter_book.core.runs_manager import IceseeRunsManager
 from icesee_jupyter_book.core.results_package import discover_result_package
+from icesee_jupyter_book.core.cloud_bridge_adapter import (
+    IceseeCloudBridgeConfig,
+    build_icesee_cloud_bridge,
+    icesee_cloud_status,
+    icesee_cloud_terminate,
+    submit_icesee_cloud_run,
+)
 from icesee_jupyter_book.core.run_records import da_identity_from_params
 from cryostack_src.frontend.cryolauncher.panels.run_plan import build_run_plan_panel
 from cryostack_src.frontend.cryolauncher.workspace.run_history import (
@@ -1267,6 +1269,7 @@ def build_icesee_ui():
         cloud_submit_btn = W.Button(description="Submit", icon="cloud-upload", button_style="warning")
         cloud_status_btn = W.Button(description="Check status", icon="search", button_style="")
         cloud_logs_btn = W.Button(description="Logs hint", icon="file-text", button_style="")
+        cloud_terminate_btn = W.Button(description="Terminate cloud job", icon="stop", button_style="danger")
 
         # =========================================================
         # Actions: Local / Remote / Cloud
@@ -2037,6 +2040,16 @@ def build_icesee_ui():
                 with log_out:
                     print("[remote][ERROR]", type(e).__name__, e)
 
+        def _icesee_cloud_bridge_config() -> IceseeCloudBridgeConfig:
+            """Fresh per-operation bridge config from the live Cloud widgets
+            -- the same 'temporary-role refresh per lifecycle operation'
+            pattern CryoLauncher's own current_cloud_bridge() uses, rather
+            than caching one bridge across the session."""
+            return IceseeCloudBridgeConfig(
+                region=aws_region.value.strip() or "us-east-1",
+                profile=(aws_profile.value.strip() or None),
+            )
+
         def run_example_cloud_submit():
             example_cfg = EXAMPLES[example_dd.value]
 
@@ -2052,33 +2065,36 @@ def build_icesee_ui():
                 print("profile:", aws_profile.value.strip() or "(default)")
                 print("s3     :", cloud_bucket.value.strip())
 
+            _run_id = _new_icesee_run_id()
+            _rd = run_dir(_icesee_run_dir_base(), _run_id)
+
             try:
-                result = submit_cloud_example(
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                result = submit_icesee_cloud_run(
+                    bridge,
                     example_name=example_dd.value,
                     example_cfg=example_cfg,
                     config=cfg_yaml,
-                    region=aws_region.value.strip() or "us-east-1",
-                    profile=(aws_profile.value.strip() or None),
                     s3_prefix=cloud_bucket.value.strip(),
                     job_queue=batch_job_queue.value.strip(),
                     job_definition=batch_job_def.value.strip(),
                     job_name=(batch_job_name.value.strip() or "icesee"),
                     run_dir_base=_icesee_run_dir_base(),
-                    run_dir_name=_new_icesee_run_id(),
+                    run_dir_name=_run_id,
                 )
 
-                STATUS["batch_job_id"] = result.batch_job_id
-                STATUS["s3_run"] = result.s3_run
-                STATUS["local_run_dir"] = str(result.run_dir)
+                STATUS["batch_job_id"] = result.job_id
+                STATUS["s3_run"] = result.working_directory
+                STATUS["local_run_dir"] = str(_rd)
 
                 _record_icesee_run(
-                    run_dir=result.run_dir, run_id=result.run_dir.name,
+                    run_dir=_rd, run_id=_run_id,
                     params=cfg_yaml, example=example_dd.value,
                     execution_mode="cloud", backend="aws",
                     source=example_dd.value,
                     run_target=batch_job_def.value.strip(),
-                    status="running", jobid=result.batch_job_id,
-                    remote_directory=result.s3_run,
+                    status="running", jobid=result.job_id,
+                    remote_directory=result.working_directory,
                 )
 
                 set_status("done")
@@ -2096,21 +2112,32 @@ def build_icesee_ui():
                 with log_out:
                     print("[cloud] No Batch job id yet. Submit first.")
                 return
-            cfg = AWSBatchConfig(
-                region=aws_region.value.strip() or "us-east-1",
-                profile=(aws_profile.value.strip() or None),
-            )
             try:
-                st = aws_batch_status(cfg, STATUS["batch_job_id"])
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                st = icesee_cloud_status(bridge, job_id=STATUS["batch_job_id"])
                 with log_out:
-                    print("[cloud] status:", st["status"])
-                    if st["reason"]:
-                        print("[cloud] reason:", st["reason"])
+                    print("[cloud] status:", st.raw_state)
+                    if st.reason:
+                        print("[cloud] reason:", st.reason)
                 if STATUS.get("local_run_dir"):
-                    _batch_status = {"SUCCEEDED": "done", "FAILED": "failed"}.get(
-                        st["status"], "running"
-                    )
-                    _update_icesee_run(Path(STATUS["local_run_dir"]), status=_batch_status)
+                    _update_icesee_run(Path(STATUS["local_run_dir"]), status=st.state)
+            except Exception as e:
+                with log_out:
+                    print("[cloud][ERROR]", type(e).__name__, e)
+
+        def run_example_cloud_terminate():
+            if not STATUS.get("batch_job_id"):
+                with log_out:
+                    print("[cloud] No Batch job id yet.")
+                return
+            try:
+                bridge = build_icesee_cloud_bridge(_icesee_cloud_bridge_config())
+                result = icesee_cloud_terminate(bridge, job_id=STATUS["batch_job_id"])
+                with log_out:
+                    print("[cloud]", result.get("message")
+                          or f"job {result.get('action', 'terminated')}")
+                if STATUS.get("local_run_dir"):
+                    _update_icesee_run(Path(STATUS["local_run_dir"]), status="cancelled")
             except Exception as e:
                 with log_out:
                     print("[cloud][ERROR]", type(e).__name__, e)
@@ -2458,6 +2485,7 @@ def build_icesee_ui():
         cloud_submit_btn.on_click(lambda b: run_example_cloud_submit())
         cloud_status_btn.on_click(lambda b: run_example_cloud_status())
         cloud_logs_btn.on_click(lambda b: run_example_cloud_logs_hint())
+        cloud_terminate_btn.on_click(lambda b: run_example_cloud_terminate())
         
         start_connector_session_btn.on_click(create_or_refresh_connector_session)
         # (removed: auto connector-session creation on access-mode change --
@@ -2887,7 +2915,7 @@ def build_icesee_ui():
                 W.HBox([W.HTML("<div class='icesee-lbl'>Queue:</div>"), batch_job_queue], layout=W.Layout(gap="12px")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Job def:</div>"), batch_job_def], layout=W.Layout(gap="12px")),
                 W.HBox([W.HTML("<div class='icesee-lbl'>Job name:</div>"), batch_job_name], layout=W.Layout(gap="12px")),
-                W.HBox([cloud_submit_btn, cloud_status_btn, cloud_logs_btn], layout=W.Layout(gap="10px")),
+                W.HBox([cloud_submit_btn, cloud_status_btn, cloud_logs_btn, cloud_terminate_btn], layout=W.Layout(gap="10px")),
             ],
             layout=W.Layout(gap="8px"),
         )
@@ -2916,6 +2944,7 @@ def build_icesee_ui():
             cloud_submit_btn.disabled = not is_cloud
             cloud_status_btn.disabled = not is_cloud
             cloud_logs_btn.disabled = not is_cloud
+            cloud_terminate_btn.disabled = not is_cloud
 
             update_action_button()
 
