@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import time as _time
 import uuid
+import html as html_lib
 import yaml
 import subprocess
 from datetime import datetime
@@ -78,6 +79,8 @@ from icesee_jupyter_book.core.cloud_runner import (
 from icesee_jupyter_book.core import run_records
 from icesee_jupyter_book.core.runs_manager import IceseeRunsManager
 from icesee_jupyter_book.core.results_package import discover_result_package
+from icesee_jupyter_book.core.run_records import da_identity_from_params
+from cryostack_src.frontend.cryolauncher.panels.run_plan import build_run_plan_panel
 from cryostack_src.frontend.cryolauncher.workspace.run_history import (
     build_workspace_history_panel,
 )
@@ -2784,6 +2787,67 @@ def build_icesee_ui():
         workspace_box.set_title(0, "🗂️ Workspace (Runs / Files)")
         workspace_box.selected_index = None
 
+        # =========================================================
+        # Run Plan -- the CryoLauncher semantic separation (execution mode
+        # / compute backend / model environment / model / provenance),
+        # reusing the SAME shared composition panel (build_run_plan_panel),
+        # with ICESEE's DA identity (DAIdentity.summary_rows(), already
+        # built in run_records.py) as first-class rows, not flattened away.
+        # =========================================================
+        run_plan_summary_html = W.HTML()
+        run_plan_command_html = W.HTML(
+            "<div class='icesee-subtle'>The exact command is shown in Run "
+            "log after Run -- it depends on live choices (connector vs "
+            "direct SSH, spack vs container, existing sbatch, etc.) this "
+            "preview does not simulate.</div>"
+        )
+
+        def _update_icesee_run_plan_summary(_=None):
+            mode = get_mode()
+            mode_label = {
+                MODE_LOCAL: "Local", MODE_REMOTE: "Remote", MODE_CLOUD: "Cloud",
+            }.get(mode, mode)
+            backend_label = {
+                MODE_LOCAL: "Local (GHUB)",
+                MODE_REMOTE: {"spack": "ICESEE-Spack", "container": "ICESEE-Container"}
+                    .get(exec_backend_choice.value, exec_backend_choice.value),
+                MODE_CLOUD: "AWS Batch",
+            }.get(mode, mode)
+            model_environment = {
+                MODE_LOCAL: "ICESEE (native Python)",
+                MODE_REMOTE: backend_label,
+                MODE_CLOUD: "AWS Batch container",
+            }.get(mode, "")
+            rows = [
+                ("Execution mode", mode_label),
+                ("Compute backend", backend_label),
+                ("Model environment", model_environment),
+            ]
+            try:
+                identity = da_identity_from_params(build_config_from_widgets())
+                rows += identity.summary_rows()
+            except Exception:
+                pass    # a mid-edit params.yaml must never break the summary
+            run_plan_summary_html.value = (
+                "<div class='cryostack-selected-run-card'>"
+                + "".join(
+                    f"<div><span>{html_lib.escape(label)}</span>"
+                    f"<b>{html_lib.escape(str(value))}</b></div>"
+                    for label, value in rows if value
+                )
+                + "</div>"
+            )
+
+        icesee_run_plan = build_run_plan_panel(
+            summary_widget=run_plan_summary_html,
+            command_widget=run_plan_command_html,
+        )
+        mode_tabs.observe(_update_icesee_run_plan_summary, names="selected_index")
+        exec_backend_choice.observe(_update_icesee_run_plan_summary, names="value")
+        example_dd.observe(_update_icesee_run_plan_summary, names="value")
+        filter_alg_dd.observe(_update_icesee_run_plan_summary, names="value")
+        ens_sl.observe(_update_icesee_run_plan_summary, names="value")
+
         # ssh_key_manager_box = W.Accordion(children=[ssh_key_manager])
         # # ssh_key_manager_box.set_title(0, "🔐 SSH Key Manager")
         # ssh_key_manager_box.set_title(0, "🔐 Server-side SSH Key Manager")
@@ -2921,6 +2985,7 @@ def build_icesee_ui():
                 header,
                 row,
                 actions_card,
+                icesee_run_plan.container,
                 workspace_box,
                 back_link,
             ],
@@ -2932,6 +2997,7 @@ def build_icesee_ui():
 
         set_status("idle")
         rebuild_for_example()
+        _update_icesee_run_plan_summary()
 
         # B2: restore this user's saved per-resource settings, last of all.
         try:
