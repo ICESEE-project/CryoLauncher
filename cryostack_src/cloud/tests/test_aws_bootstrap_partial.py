@@ -45,7 +45,7 @@ def _driver(**stage_impls):
     d.network = stage_impls.get("network", lambda: type("N", (), {
         "vpc_id": "vpc-1", "subnet_ids": ["s-1"], "security_group_ids": ["sg-1"]})())
     d.prepare_registry = stage_impls.get(
-        "registry", lambda *, include_icepack=False: type("R", (), {
+        "registry", lambda *, include_icepack=False, include_icesee=False: type("R", (), {
             "resources": None, "created": [], "reused": ["cryostack-issm"]})())
     d.prepare_batch = stage_impls.get("batch", lambda **kw: type("B", (), {
         "resources": type("X", (), {"compute_environment": "ce", "job_queue": "q",
@@ -137,12 +137,14 @@ def test_bootstrap_prepares_both_models_registry_and_batch(monkeypatch):
 
     seen = {}
 
-    def registry_spy(*, include_icepack=False):
+    def registry_spy(*, include_icepack=False, include_icesee=False):
         seen["registry_include_icepack"] = include_icepack
+        seen["registry_include_icesee"] = include_icesee
         return type("R", (), {"resources": None, "created": [], "reused": ["cryostack-issm"]})()
 
     def batch_spy(**kw):
         seen["batch_include_icepack"] = kw.get("include_icepack")
+        seen["batch_include_icesee"] = kw.get("include_icesee")
         return type("B", (), {
             "resources": type("X", (), {"compute_environment": "ce", "job_queue": "q",
                                         "issm_job_definition": "jd"})(),
@@ -156,6 +158,47 @@ def test_bootstrap_prepares_both_models_registry_and_batch(monkeypatch):
     assert result["success"] is True
     assert seen["registry_include_icepack"] is True
     assert seen["batch_include_icepack"] is True
+
+
+# -- ICESEE Cloud Execution checkpoint ------------------------------------
+def test_bootstrap_also_prepares_icesee_registry_and_batch(monkeypatch):
+    """Prepare Cloud (bootstrap) must request ICESEE's resources too, the
+    SAME unconditional way it already does for Icepack -- this is not a
+    separate Prepare Cloud implementation, just a third opt-in on the one
+    existing call site."""
+    import cryostack_src.cloud.drivers.aws.driver as drv
+    monkeypatch.setattr(drv, "ensure_iam_resources", lambda *a, **k: type("I", (), {
+        "resources": type("R", (), {"job_role": "jr", "ecs_execution_role": "er"})(),
+        "created": [], "reused": ["job_role"]})())
+
+    class _CapsOK(_Caps):
+        storage_ready = True
+        registry_ready = True
+        batch_ready = True
+        network_ready = True
+        iam_ready = True
+
+    seen = {}
+
+    def registry_spy(*, include_icepack=False, include_icesee=False):
+        seen["registry_include_icesee"] = include_icesee
+        return type("R", (), {"resources": None, "created": [], "reused": ["cryostack-issm"]})()
+
+    def batch_spy(**kw):
+        seen["batch_include_icesee"] = kw.get("include_icesee")
+        return type("B", (), {
+            "resources": type("X", (), {"compute_environment": "ce", "job_queue": "q",
+                                        "issm_job_definition": "jd"})(),
+            "created": [], "updated": [], "reused": [], "skipped": [], "messages": [],
+            "image_delivery": None})()
+
+    d = _driver(registry=registry_spy, batch=batch_spy)
+    d.capabilities = lambda: _CapsOK()
+    result = d.bootstrap(bucket="cryostack-runs-774888247882")
+
+    assert result["success"] is True
+    assert seen["registry_include_icesee"] is True
+    assert seen["batch_include_icesee"] is True
 
 
 def test_redact_helper_scrubs_secret_shaped_text():

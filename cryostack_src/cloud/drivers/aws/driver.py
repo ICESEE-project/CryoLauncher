@@ -233,16 +233,21 @@ class AWSDriver(
         registry=None,          # accepted for call-site compatibility; unused
         max_vcpus: int = DEFAULT_MAX_VCPUS,
         include_icepack: bool = False,
+        include_icesee: bool = False,
         image_copier=None,
         matlab_secret_arn: str = "",
     ) -> AWSBatchProvisionResult:
         """
         Idempotently provision AWS Batch on Fargate: a scale-to-zero compute
         environment, a job queue, and the ISSM job definition (+ log group).
-        When ``include_icepack`` is set, the Icepack job definition (+ its
-        own log group) is provisioned the same way, in the SAME compute
-        environment / queue -- one Batch environment, two job definitions,
-        no second cloud execution path.
+        When ``include_icepack``/``include_icesee`` is set, that model's job
+        definition (+ its own log group) is provisioned the same way, in the
+        SAME compute environment / queue -- one Batch environment, N job
+        definitions, no second cloud execution path. ICESEE's job definition
+        runs :func:`icesee_jupyter_book.core.cloud_runner.icesee_batch_command`
+        (its own ``ICESEE_*`` env contract, verified 2026-09-08 for
+        single-rank/lorenz96 only -- see that module), never the generic
+        ``cryostack-run`` command ISSM/Icepack share.
 
         Each model's job definition is pinned to the tested image **by
         digest**: the (single, combined) tested image is mirrored into that
@@ -292,7 +297,14 @@ class AWSDriver(
             icepack_delivery, icepack_image, icepack_messages = _mirror("icepack")
             delivery_messages.extend(icepack_messages)
 
+        icesee_delivery = None
+        icesee_image = None
+        if include_icesee:
+            icesee_delivery, icesee_image, icesee_messages = _mirror("icesee")
+            delivery_messages.extend(icesee_messages)
+
         from cryostack_src.cloud.runtime import cloud_run_command
+        from icesee_jupyter_book.core.cloud_runner import icesee_batch_command
 
         result = ensure_batch_resources(
             self.config,
@@ -306,9 +318,13 @@ class AWSDriver(
             issm_secrets=_issm_matlab_secrets(matlab_secret_arn),
             include_icepack=include_icepack,
             icepack_image=icepack_image,
+            include_icesee=include_icesee,
+            icesee_image=icesee_image,
+            icesee_command=icesee_batch_command() if include_icesee else None,
         )
         result.image_delivery = delivery
         result.icepack_image_delivery = icepack_delivery
+        result.icesee_image_delivery = icesee_delivery
         result.messages.extend(delivery_messages)
         return result
 
@@ -444,11 +460,13 @@ class AWSDriver(
             # ---------------------------------------------------------
             #
             stage = "registry"
-            # Prepare Cloud provisions BOTH supported models' ECR repositories
-            # -- cryostack-issm and cryostack-icepack -- from the single
-            # tested combined image (models=("issm","icepack")); idempotent,
-            # never a rebuild.
-            registry_result = self.prepare_registry(include_icepack=True)
+            # Prepare Cloud provisions every currently-tested model's ECR
+            # repository -- cryostack-issm, cryostack-icepack and
+            # cryostack-icesee -- from the single tested combined image
+            # (models=("issm","icepack","icesee")); idempotent, never a
+            # rebuild.
+            registry_result = self.prepare_registry(
+                include_icepack=True, include_icesee=True)
             registry = registry_result.resources
             if registry_result.created:
                 messages.append(
@@ -473,6 +491,7 @@ class AWSDriver(
                 iam=iam,
                 registry=registry,
                 include_icepack=True,
+                include_icesee=True,
                 matlab_secret_arn=matlab_secret_arn,
             )
 
@@ -577,11 +596,13 @@ class AWSDriver(
         self,
         *,
         include_icepack: bool = False,
+        include_icesee: bool = False,
     ):
 
         return ensure_registry_resources(
             self.config,
             include_icepack=include_icepack,
+            include_icesee=include_icesee,
         )
 
     def submit(self, **kwargs):

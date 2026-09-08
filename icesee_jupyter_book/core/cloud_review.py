@@ -15,10 +15,19 @@ fields instead.
 
 :func:`icesee_cloud_runtime_ready` is a real, checkable fact (whether a
 tested cloud container/job definition is registered for "icesee" in
-``cryostack_src.models.stack.images``) -- not a placeholder. It is false
-today (see ``overnight/AUDIT_icesee_cloud_execution_parity.md``), so Launch
-is honestly blocked until a real one is registered, regardless of how
-ready the generic AWS account/storage/compute infrastructure is.
+``cryostack_src.models.stack.images``) -- not a placeholder. As of the
+2026-09-08 verification checkpoint it is True (bkyanjo/icesee-combined:
+v1.0.1's Lorenz-96 example runs end-to-end under ``with-icesee``), so this
+alone no longer blocks Launch.
+
+A second, independent fact now also gates Launch: the verified runtime
+contract only covers ONE example (``lorenz96``) at ``ICESEE_NP=1`` (see
+``icesee_jupyter_book.core.cloud_runner``'s ``ICESEE_VERIFIED_EXAMPLES`` /
+``ICESEE_VERIFIED_MAX_NP`` -- NP>1 races on shared HDF5 output files, and
+no other example has been run against this image). ``build_icesee_cloud_review``
+checks the run's OWN configured example/NP against that contract and
+refuses to claim launch readiness for anything outside it, with an honest
+reason -- never a silent coercion to NP=1.
 """
 from __future__ import annotations
 
@@ -35,6 +44,19 @@ def icesee_cloud_runtime_ready() -> bool:
     from cryostack_src.models.stack import default_tested_image_for_model
 
     return default_tested_image_for_model("icesee") is not None
+
+
+def icesee_runtime_contract_ok(*, example_name: str, parallel_processes: int) -> bool:
+    """Whether THIS run's configuration (example + NP) is inside the
+    verified runtime contract -- a fact about the run, distinct from
+    :func:`icesee_cloud_runtime_ready` (a fact about the image)."""
+    from icesee_jupyter_book.core.cloud_runner import (
+        ICESEE_VERIFIED_EXAMPLES,
+        ICESEE_VERIFIED_MAX_NP,
+    )
+
+    key = (example_name or "").strip().lower()
+    return key in ICESEE_VERIFIED_EXAMPLES and int(parallel_processes) == ICESEE_VERIFIED_MAX_NP
 
 
 @dataclass
@@ -59,6 +81,16 @@ class IceseeCloudReview:
     # infrastructure
     infrastructure: InfrastructureReadiness = field(default_factory=InfrastructureReadiness)
     icesee_runtime_ready: bool = False
+    # the run's OWN example (e.g. "lorenz96") -- independent of whether a
+    # tested image exists; used only to check it against the verified
+    # runtime contract (see icesee_runtime_contract_ok / ICESEE_VERIFIED_*)
+    example_name: str = ""
+    #: True only when THIS run's example + NP are inside the verified
+    #: runtime contract. Distinct from icesee_runtime_ready (image exists).
+    runtime_contract_ok: bool = False
+    #: human-readable parallel-mode line for the Review card, e.g.
+    #: "Single-rank verified" or "Unverified (NP=4)".
+    parallel_mode_label: str = ""
     # gating
     can_launch: bool = False
     blocked_reasons: list = field(default_factory=list)
@@ -79,6 +111,9 @@ class IceseeCloudReview:
             "image_digest": self.image_digest,
             "infrastructure": self.infrastructure.as_dict(),
             "icesee_runtime_ready": self.icesee_runtime_ready,
+            "example_name": self.example_name,
+            "runtime_contract_ok": self.runtime_contract_ok,
+            "parallel_mode_label": self.parallel_mode_label,
             "can_launch": self.can_launch,
             "blocked_reasons": list(self.blocked_reasons),
             "digest": self.digest,
@@ -87,7 +122,7 @@ class IceseeCloudReview:
 
 def icesee_review_digest(
     *, forecast_model: str, filter_alg: str, ensemble_size: int,
-    parallel_processes: int, region: str, account_id: str,
+    parallel_processes: int, region: str, account_id: str, example_name: str = "",
 ) -> str:
     """A short stable hash over the billable/scientific config -- the same
     drift-detection idea as CryoLauncher's ``review_digest``: any change
@@ -98,6 +133,7 @@ def icesee_review_digest(
         "ensemble_size": int(ensemble_size or 0),
         "parallel_processes": int(parallel_processes or 0),
         "region": region, "account_id": account_id,
+        "example_name": (example_name or "").strip().lower(),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
@@ -113,11 +149,14 @@ def build_icesee_cloud_review(
     region: str,
     infrastructure: InfrastructureReadiness,
     account_freshly_verified: bool,
+    example_name: str,
 ) -> IceseeCloudReview:
     """Assemble an ICESEE cloud review and decide whether Launch is
     allowed. Launch is gated on: fresh account verification + storage/
-    compute infrastructure Ready + a registered ICESEE tested runtime --
-    never faked, never inherited from CryoLauncher's own model gate."""
+    compute infrastructure Ready + a registered ICESEE tested runtime +
+    this run's OWN example/NP being inside the verified runtime contract
+    -- never faked, never inherited from CryoLauncher's own model gate, and
+    never silently coerced to a value that WOULD be verified."""
     reasons: list[str] = []
 
     if not account_freshly_verified:
@@ -149,10 +188,41 @@ def build_icesee_cloud_review(
             "gap, not a temporary check."
         )
 
+    from icesee_jupyter_book.core.cloud_runner import (
+        ICESEE_VERIFIED_EXAMPLES,
+        ICESEE_VERIFIED_MAX_NP,
+    )
+
+    contract_ok = icesee_runtime_contract_ok(
+        example_name=example_name, parallel_processes=parallel_processes)
+    example_key = (example_name or "").strip().lower()
+    if runtime_ready and not contract_ok:
+        if example_key not in ICESEE_VERIFIED_EXAMPLES:
+            reasons.append(
+                f"ICESEE example {example_name!r} has no verified cloud "
+                f"runtime path -- only "
+                f"{', '.join(sorted(ICESEE_VERIFIED_EXAMPLES)) or 'none'} "
+                "has been verified end-to-end. Launch is blocked until this "
+                "example is verified."
+            )
+        if int(parallel_processes) != ICESEE_VERIFIED_MAX_NP:
+            reasons.append(
+                f"ICESEE_NP={parallel_processes} is not verified for cloud "
+                f"execution -- only single-rank (NP="
+                f"{ICESEE_VERIFIED_MAX_NP}) runs have been verified "
+                "end-to-end; multi-rank runs race on shared output files. "
+                "Launch is blocked until multi-rank execution is verified."
+            )
+
+    parallel_mode_label = (
+        "Single-rank verified" if contract_ok
+        else f"Unverified (example={example_name or '—'}, NP={parallel_processes})"
+    )
+
     digest = icesee_review_digest(
         forecast_model=forecast_model, filter_alg=filter_alg,
         ensemble_size=ensemble_size, parallel_processes=parallel_processes,
-        region=region, account_id=account_id,
+        region=region, account_id=account_id, example_name=example_name,
     )
 
     return IceseeCloudReview(
@@ -164,6 +234,8 @@ def build_icesee_cloud_review(
         image_label=image_label, image_reference=image_reference,
         image_digest=image_digest, image_public_url=image_public_url,
         infrastructure=infrastructure, icesee_runtime_ready=runtime_ready,
+        example_name=example_name, runtime_contract_ok=contract_ok,
+        parallel_mode_label=parallel_mode_label,
         can_launch=not reasons, blocked_reasons=reasons, digest=digest,
     )
 
@@ -239,6 +311,10 @@ def render_icesee_review_panel(widgets, review: IceseeCloudReview) -> None:
         <tr><td style="padding:1px 12px 1px 0;">Storage</td><td>{_yn(infra.storage)}</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Container</td><td>{_yn(review.icesee_runtime_ready)}</td></tr>
         <tr><td style="padding:1px 12px 1px 0;">Compute</td><td>{_yn(infra.compute)}</td></tr>
+        <tr><td colspan="2" style="padding-top:6px;font-weight:700;color:#172033;">Verified runtime contract</td></tr>
+        <tr><td style="padding:1px 12px 1px 0;">ICESEE runtime</td><td>{_yn(review.runtime_contract_ok)}</td></tr>
+        <tr><td style="padding:1px 12px 1px 0;">Parallel mode</td><td>{escape_text(review.parallel_mode_label)}</td></tr>
+        <tr><td style="padding:1px 12px 1px 0;">Processes</td><td>{review.parallel_processes}</td></tr>
       </table>
       {blocked}
     """

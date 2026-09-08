@@ -3199,6 +3199,12 @@ def build_icesee_ui():
                 parallel_processes=int(cluster_mpi_np.value),
                 account_id=execution.account_id, region=execution.region,
                 infrastructure=infra, account_freshly_verified=execution.is_byo,
+                # the run's OWN canonical example key (params.yaml's
+                # modeling-parameters.example_name, e.g. "lorenz96") -- NOT
+                # the human-readable example_dd.value label -- checked
+                # against the verified runtime contract
+                # (ICESEE_VERIFIED_EXAMPLES / ICESEE_VERIFIED_MAX_NP).
+                example_name=identity.example_name or example_dd.value,
             )
 
         def _on_icesee_review_click(_=None):

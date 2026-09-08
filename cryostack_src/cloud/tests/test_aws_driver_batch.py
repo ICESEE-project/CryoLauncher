@@ -173,3 +173,143 @@ def test_icepack_delivery_failure_does_not_block_issm(monkeypatch, captured):
     assert captured["icepack_image"] is None
     assert result.image_delivery.verified is True
     assert result.icepack_image_delivery is None
+
+
+# -- ICESEE Cloud Execution checkpoint (Prepare Cloud final wiring) ------
+def test_include_icesee_false_never_mirrors_icesee(monkeypatch, captured):
+    """The default (used by every caller except Prepare Cloud) is unchanged:
+    only ISSM is mirrored, and no icesee_command is ever computed."""
+    calls = []
+
+    def spy(config, *, model, copier):
+        calls.append(model)
+        return _delivery(model=model)
+
+    monkeypatch.setattr(driver_mod, "mirror_tested_image", spy)
+    AWSDriver(region="us-east-2").prepare_batch(network=_NET, iam=_IAM)
+    assert calls == ["issm"]
+    assert captured["include_icesee"] is False
+    assert captured["icesee_image"] is None
+    assert captured["icesee_command"] is None
+
+
+def test_include_icesee_true_mirrors_icesee_and_uses_its_own_batch_command(
+    monkeypatch, captured,
+):
+    """Prepare Cloud's actual call shape for ICESEE: the tested image is
+    mirrored into cryostack-icesee, and the job definition's command is
+    icesee_batch_command() -- ICESEE's own ICESEE_* runner, never the
+    generic cryostack-run ISSM/Icepack share."""
+    from icesee_jupyter_book.core.cloud_runner import icesee_batch_command
+
+    calls = []
+
+    def spy(config, *, model, copier):
+        calls.append((model, copier))
+        return _delivery(model=model, repository=f"cryostack-{model}",
+                         immutable_reference=f"{model}@sha256:dddd")
+
+    monkeypatch.setattr(driver_mod, "mirror_tested_image", spy)
+    result = AWSDriver(region="us-east-2").prepare_batch(
+        network=_NET, iam=_IAM, include_icesee=True)
+
+    assert [m for m, _ in calls] == ["issm", "icesee"]
+    assert calls[0][1] is calls[1][1]                    # same copier instance
+    assert captured["include_icesee"] is True
+    assert captured["issm_image"] == "issm@sha256:dddd"
+    assert captured["icesee_image"] == "icesee@sha256:dddd"
+    assert captured["icesee_command"] == icesee_batch_command()
+    assert result.image_delivery.model == "issm"
+    assert result.icesee_image_delivery.model == "icesee"
+
+
+def test_icesee_delivery_failure_does_not_block_issm(monkeypatch, captured):
+    """ICESEE's mirror failing must never prevent ISSM's job definition from
+    being (re)pinned -- independent failure domains, same as Icepack."""
+    def spy(config, *, model, copier):
+        if model == "icesee":
+            raise RegistryDeliveryError("no copier configured")
+        return _delivery()
+
+    monkeypatch.setattr(driver_mod, "mirror_tested_image", spy)
+    result = AWSDriver(region="us-east-2").prepare_batch(
+        network=_NET, iam=_IAM, include_icesee=True)
+
+    assert captured["issm_image"] == _IMMUTABLE
+    assert captured["icesee_image"] is None
+    assert result.image_delivery.verified is True
+    assert result.icesee_image_delivery is None
+
+
+def test_icesee_job_definition_never_receives_the_matlab_secret(monkeypatch, captured):
+    """ICESEE has no MATLAB license requirement -- a matlab_secret_arn
+    configured for ISSM must never leak into ICESEE's job definition. This
+    is a real credential-boundary check, not just a shape check: it patches
+    ensure_batch_resources with the REAL function (not the captured fake)
+    so the actual containerProperties.secrets wiring is exercised."""
+    from cryostack_src.cloud.drivers.aws.batch_provision import (
+        ensure_batch_resources as real_ensure_batch_resources,
+    )
+
+    monkeypatch.setattr(driver_mod, "ensure_batch_resources", real_ensure_batch_resources)
+    monkeypatch.setattr(driver_mod, "mirror_tested_image",
+                        lambda config, *, model, copier: _delivery(
+                            model=model, repository=f"cryostack-{model}",
+                            immutable_reference=f"{model}@sha256:dddd"))
+
+    seen_job_defs = {}
+
+    def fake_ensure_job_definition(config, *, model, image, job_role_arn,
+                                   execution_role_arn, region, job_config,
+                                   command=None, secrets=None):
+        seen_job_defs[model] = {"command": command, "secrets": secrets}
+        return "created"
+
+    monkeypatch.setattr(
+        "cryostack_src.cloud.drivers.aws.batch_provision.ensure_job_definition",
+        fake_ensure_job_definition,
+    )
+    monkeypatch.setattr(
+        "cryostack_src.cloud.drivers.aws.batch_provision.discover_batch_resources",
+        lambda config: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "cryostack_src.cloud.drivers.aws.batch_provision.ensure_compute_environment",
+        lambda config, *, subnets, security_groups, max_vcpus, **kw: "reused",
+    )
+    monkeypatch.setattr(
+        "cryostack_src.cloud.drivers.aws.batch_provision.ensure_job_queue",
+        lambda config, **kw: "reused",
+    )
+    monkeypatch.setattr(
+        "cryostack_src.cloud.drivers.aws.batch_provision.ensure_log_group",
+        lambda config, *, model: f"/cryostack/batch/{model}",
+    )
+
+    AWSDriver(region="us-east-2").prepare_batch(
+        network=_NET, iam=_IAM, include_icesee=True,
+        matlab_secret_arn="arn:aws:secretsmanager:us-east-2:123:secret:matlab-abc",
+    )
+
+    assert seen_job_defs["issm"]["secrets"]        # ISSM keeps its license secret
+    assert seen_job_defs["icesee"]["secrets"] is None   # ICESEE never gets one
+
+
+def test_include_icepack_and_icesee_together_share_one_copier(monkeypatch, captured):
+    """All three models can be prepared in one Prepare Cloud pass, sharing
+    the same copier instance, each independent of the others."""
+    calls = []
+
+    def spy(config, *, model, copier):
+        calls.append((model, copier))
+        return _delivery(model=model, repository=f"cryostack-{model}",
+                         immutable_reference=f"{model}@sha256:dddd")
+
+    monkeypatch.setattr(driver_mod, "mirror_tested_image", spy)
+    result = AWSDriver(region="us-east-2").prepare_batch(
+        network=_NET, iam=_IAM, include_icepack=True, include_icesee=True)
+
+    assert [m for m, _ in calls] == ["issm", "icepack", "icesee"]
+    assert len({id(c) for _, c in calls}) == 1           # one shared copier
+    assert result.icepack_image_delivery.model == "icepack"
+    assert result.icesee_image_delivery.model == "icesee"
