@@ -40,7 +40,7 @@
   <text x="245" y="385" text-anchor="middle" class="box-title">CryoLauncher</text>
   <text x="245" y="414" text-anchor="middle" class="body">Modular run planning</text>
   <text x="245" y="438" text-anchor="middle" class="body">models · logs · results</text>
-  <text x="245" y="462" text-anchor="middle" class="small">ISSM · Icepack · flowline · L96</text>
+  <text x="245" y="462" text-anchor="middle" class="small">ISSM · Icepack</text>
 
   <rect x="400" y="350" width="260" height="130" rx="14" fill="#e2f1e7" stroke="#57916c" stroke-width="2" filter="url(#shadow)"/>
   <text x="530" y="385" text-anchor="middle" class="box-title">ICESEE</text>

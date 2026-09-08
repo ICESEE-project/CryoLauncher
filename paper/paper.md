@@ -125,8 +125,10 @@ in a registry rather than hard-coded in a single service script.
 ![CryoStack's current layered architecture. A shared gateway and operations plane supplies identity, per-user workspaces, experiments, administration, deployment, and health services to four scientific applications. Shared contracts cover model capabilities, structured results, and visualization. Modeling and data-assimilation workflows can use local, connector-mediated HPC, or AWS Batch execution backends over reproducible Spack and container environments.](cryostack_architecture.png)
 
 **Figure 1:** CryoStack platform architecture. Solid components are present in
-the repository. The AWS Batch path is implemented for ISSM and awaits
-qualification on a controlled account.
+the repository. The AWS Batch path is implemented for both CryoLauncher/ISSM
+and ICESEE; ISSM awaits qualification on a controlled account, and ICESEE's
+verified coverage is limited to a single example at NP=1 (single-process
+execution).
 
 ## Gateway, routing, and process composition
 
@@ -420,6 +422,10 @@ institutional key-registration process.
 # Cloud and Container Architecture
 
 The cloud subsystem is organized around provider-independent driver contracts.
+Moving an application between execution backends reuses the same
+scientific/application configuration rather than requiring a separate
+backend-specific one, although backend-specific execution and infrastructure
+settings, and validation maturity, still differ by application and backend.
 Abstract cloud and execution interfaces separate frontend actions from provider
 operations. The AWS driver exposes identity and capability inspection;
 discovery and preparation of VPC, subnet, security-group, IAM, S3, ECR, and
@@ -441,11 +447,19 @@ termination flow back through the common execution result. This path is
 implemented but not yet qualified: it runs against a single account-wide bucket
 without per-user object isolation, accepts a caller-supplied Batch job
 definition rather than an allow-listed one, and lacks the budget, quota,
-cleanup, and failure-recovery controls a shared service needs. Cloud execution
-is restricted to ISSM; the multi-node MPI ensembles that ICESEE runs do not fit
-the current single-container Batch configuration. ISSM cloud runs additionally
-require a MATLAB license to be configured for the cloud profile, and the
-reference deployment does not provide one.
+cleanup, and failure-recovery controls a shared service needs. The same AWS
+driver and provisioning architecture also now serves ICESEE rather than a
+second, independent cloud stack; connecting a personal AWS account uses a
+connection-scoped CloudFormation onboarding flow, so independently created
+CryoStack AWS connections do not depend on one globally fixed execution-role
+name. ICESEE's Lorenz-96 example has been executed end to end through this
+shared path at NP=1 (single-process execution), but this does not extend to
+ICESEE's other examples or to multi-process execution, and it does not
+substitute for the ISSM qualification described above: architectural reach
+across applications is currently broader than what has been validated end
+to end for either one. ISSM cloud runs additionally require a MATLAB
+license to be configured for the cloud profile, and the reference
+deployment does not provide one.
 
 Two environment strategies complement these execution backends. ICESEE-Spack
 uses Spack [@gamblin2015spack] to resolve source builds against site compilers,
@@ -527,11 +541,11 @@ interfaces, connector packages, cloud and container modules, deployment
 registry, documentation, Frozen Legacies integration, LIVIST submodule, and a
 pinned ICESEE source snapshot.
 
-The shared platform layers are exercised by an automated test suite:
-approximately 1,280 Python tests spanning the gateway, authentication, Control
-Center, frontend panels, model adapters, connector, cloud modules, and
-deployment engine, plus a browser-facing connector-page test set, all passing
-at the documented revision. A separate offline acceptance command
+The current automated test suite includes more than 1,800 passing Python
+tests spanning the gateway, authentication, Control Center, frontend
+panels, model adapters, connector, cloud modules, and deployment engine,
+plus a browser-facing connector-page test set. A separate offline
+acceptance command
 (`python -m cryostack_src.acceptance --offline`) runs read-only invariant
 checks — agent safety properties, capability-registry and result-contract
 consistency, cloud restrictions and absence of static credentials, per-user
