@@ -80,6 +80,7 @@ from icesee_jupyter_book.core.cloud_bridge_adapter import (
     icesee_cloud_status,
     icesee_cloud_terminate,
     submit_icesee_cloud_run,
+    sync_icesee_cloud_results,
 )
 from cryostack_src.cloud.diagnostics import merge_aws_resources, resources_from_poll
 from icesee_jupyter_book.core.run_records import da_identity_from_params
@@ -2850,10 +2851,42 @@ def build_icesee_ui():
         # =========================================================
         icesee_runs_manager = IceseeRunsManager(root=_icesee_run_dir_base())
 
+        def _sync_icesee_cloud_run_results(run) -> None:
+            """Best-effort S3 -> local sync before showing Results for a
+            selected CLOUD run -- resolved from the run's OWN persisted
+            identity (metadata['aws_resources']), never the live Cloud panel
+            widgets, so a later visit stays correct regardless of what has
+            since changed there. Never breaks the Results view: a sync
+            failure (unreachable AWS, no S3 identity yet, ...) just leaves
+            whatever is already local in place."""
+            if run.execution_mode != "cloud" or not run.jobid:
+                return
+            resources = (run.metadata or {}).get("aws_resources") or {}
+            s3_run = resources.get("s3_run") or (
+                str(run.remote_directory) if run.remote_directory else ""
+            )
+            if not s3_run:
+                return
+            try:
+                execution = _resolve_icesee_cloud_execution(
+                    region_override=resources.get("region"),
+                )
+                sync_icesee_cloud_results(
+                    IceseeCloudBridgeConfig(
+                        region=execution.region, profile=execution.profile,
+                        credentials=execution.credentials,
+                    ),
+                    s3_run=s3_run, local_dir=run.workspace_directory,
+                )
+            except Exception as _e:
+                with results_out:
+                    print(f"[cloud] result sync skipped: {type(_e).__name__}: {_e}")
+
         def _on_icesee_run_selected(run_id):
             run = icesee_runs_manager.selected_run()
             if not (run and run.workspace_directory):
                 return
+            _sync_icesee_cloud_run_results(run)
             refresh_results_preview(run.workspace_directory, results_out)
             try:
                 pkg = discover_result_package(run.workspace_directory)

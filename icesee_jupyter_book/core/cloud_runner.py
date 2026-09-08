@@ -195,6 +195,34 @@ def aws_batch_status(cfg: AWSBatchConfig, job_id: str, *, aws=None) -> dict:
     return {"status": job.get("status", "?"), "reason": job.get("statusReason", "")}
 
 
+def sync_cloud_outputs(
+    cfg: AWSBatchConfig, s3_run: str, local_dir: Path, *, aws=None,
+) -> bool:
+    """Sync ``s3://<s3_run>/outputs/`` into ``local_dir`` (a run's own
+    ``workspace_directory``) -- the S3 -> local run-cache step of the
+    lifecycle diagram (local run -> stage inputs -> S3 -> AWS execution ->
+    outputs/ -> S3 -> run cache -> ResultPackage -> Workspace Results).
+
+    A real ICESEE Batch entrypoint is expected to mirror the SAME
+    ``results/``/``figures/`` layout ``discover_result_package()`` already
+    reads locally, so no new discovery code is needed -- whatever lands in
+    ``local_dir`` after this call is picked up by the existing DA-aware
+    ResultPackage unchanged.
+
+    Returns whether the ``aws s3 sync`` command itself succeeded (exit 0).
+    This is NOT a claim that any file was actually found -- an empty/not-
+    yet-populated S3 prefix syncs successfully and produces nothing; the
+    caller (or discover_result_package) is the ground truth for that."""
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    code, out, err = _run(
+        cfg, ["s3", "sync", f"{s3_run.rstrip('/')}/outputs/", str(local_dir)], aws=aws,
+    )
+    if code != 0:
+        raise RuntimeError(err or out)
+    return True
+
+
 def terminate_cloud_job(cfg: AWSBatchConfig, job_id: str) -> dict:
     """Cancel/terminate an AWS Batch job -- ICESEE had no terminate
     capability before this. Reuses CryoLauncher's own hardened

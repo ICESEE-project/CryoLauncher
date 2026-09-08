@@ -27,6 +27,7 @@ from icesee_jupyter_book.core.cloud_bridge_adapter import (
     icesee_cloud_status,
     icesee_cloud_terminate,
     submit_icesee_cloud_run,
+    sync_icesee_cloud_results,
 )
 
 
@@ -170,3 +171,19 @@ def test_a_missing_job_never_reaches_icesees_own_status_function():
     src = Path(__file__).resolve().parents[1].joinpath("cloud_bridge_adapter.py").read_text()
     assert "aws_batch_status" not in src
     assert "terminate_cloud_job" not in src
+
+
+def test_sync_icesee_cloud_results_reaches_s3_sync_with_the_configs_credentials(tmp_path):
+    fake = _FakeAWS(responses=[(0, "", "")])
+    creds = {"AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "b",
+             "AWS_SESSION_TOKEN": "c"}
+    cfg = IceseeCloudBridgeConfig(region="us-east-2", credentials=creds, aws=fake)
+
+    ok = sync_icesee_cloud_results(
+        cfg, s3_run="s3://bucket/runs/r1", local_dir=tmp_path / "cache",
+    )
+
+    assert ok is True
+    (config, args) = fake.calls[0]
+    assert args == ["s3", "sync", "s3://bucket/runs/r1/outputs/", str(tmp_path / "cache")]
+    assert config.credentials == creds

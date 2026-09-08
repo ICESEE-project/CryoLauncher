@@ -274,3 +274,25 @@ def test_submit_cloud_example_warns_when_np_exceeds_the_single_task_ceiling(tmp_
         aws=fake,
     )
     assert any("exceeds" in m and "Fargate" in m for m in result.messages)
+
+
+# ── S3 result sync ───────────────────────────────────────────────────────
+def test_sync_cloud_outputs_issues_s3_sync_from_outputs_prefix(tmp_path):
+    from icesee_jupyter_book.core.cloud_runner import sync_cloud_outputs
+
+    fake = _FakeAWS(responses=[(0, "", "")])
+    cfg = AWSBatchConfig(region="us-east-2")
+    ok = sync_cloud_outputs(cfg, "s3://bucket/runs/r1", tmp_path / "cache", aws=fake)
+
+    assert ok is True
+    (_, args) = fake.calls[0]
+    assert args == ["s3", "sync", "s3://bucket/runs/r1/outputs/", str(tmp_path / "cache")]
+    assert (tmp_path / "cache").is_dir()
+
+
+def test_sync_cloud_outputs_raises_on_failure(tmp_path):
+    from icesee_jupyter_book.core.cloud_runner import sync_cloud_outputs
+
+    fake = _FakeAWS(responses=[(1, "", "access denied")])
+    with pytest.raises(RuntimeError, match="access denied"):
+        sync_cloud_outputs(AWSBatchConfig(), "s3://bucket/runs/r1", tmp_path, aws=fake)

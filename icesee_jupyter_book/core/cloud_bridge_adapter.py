@@ -117,3 +117,20 @@ def icesee_cloud_status(bridge: CloudBridge, *, job_id: str) -> ExecutionStatus:
 
 def icesee_cloud_terminate(bridge: CloudBridge, *, job_id: str) -> dict:
     return bridge.terminate(job_id=job_id)
+
+
+def sync_icesee_cloud_results(
+    cfg: IceseeCloudBridgeConfig, *, s3_run: str, local_dir: "Path | str",
+) -> bool:
+    """S3 -> local run-cache sync for a cloud run's outputs (step 4 of the
+    ICESEE cloud execution-parity checkpoint). ``cfg`` should be built from
+    the RUN'S OWN persisted identity (region, and a freshly-resolved BYO/dev
+    credential context) -- never from whatever the Cloud panel's widgets
+    currently say -- so a later visit re-syncs correctly regardless of what
+    has since changed there. ``discover_result_package()`` needs no changes:
+    it already discovers whatever is actually present under ``results/``/
+    ``figures/`` after this call."""
+    from .cloud_runner import AWSBatchConfig, sync_cloud_outputs
+
+    batch_cfg = AWSBatchConfig(region=cfg.region, profile=cfg.profile, credentials=cfg.credentials)
+    return sync_cloud_outputs(batch_cfg, s3_run, Path(local_dir), aws=cfg.aws)
