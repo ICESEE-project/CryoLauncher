@@ -23,6 +23,13 @@ from dataclasses import dataclass
 @dataclass
 class RemoteSubmitResult:
     success: bool
+    jobid: str | None
+    remote_dir: str
+    remote_example_dir: str | None
+    spack_path: str | None
+    used_existing_sbatch: bool
+    existing_sbatch_name: str | None
+    messages: list[str]
 
 
 def require_remote_base_dir(value):
@@ -32,13 +39,6 @@ def require_remote_base_dir(value):
     """
     from cryostack_src.remote.runtime import require_remote_base_dir as _impl
     return _impl(value)
-    jobid: str | None
-    remote_dir: str
-    remote_example_dir: str | None
-    spack_path: str | None
-    used_existing_sbatch: bool
-    existing_sbatch_name: str | None
-    messages: list[str]
 
 def resolve_remote_abs_path(host: str, user: str, port: int, remote_path: str) -> str:
     rc, out, err = rsh(
