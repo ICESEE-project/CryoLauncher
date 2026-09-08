@@ -77,6 +77,7 @@ from icesee_jupyter_book.core.cloud_runner import (
 )
 from icesee_jupyter_book.core import run_records
 from icesee_jupyter_book.core.runs_manager import IceseeRunsManager
+from icesee_jupyter_book.core.results_package import discover_result_package
 from cryostack_src.frontend.cryolauncher.workspace.run_history import (
     build_workspace_history_panel,
 )
@@ -2722,8 +2723,19 @@ def build_icesee_ui():
 
         def _on_icesee_run_selected(run_id):
             run = icesee_runs_manager.selected_run()
-            if run and run.workspace_directory:
-                refresh_results_preview(run.workspace_directory, results_out)
+            if not (run and run.workspace_directory):
+                return
+            refresh_results_preview(run.workspace_directory, results_out)
+            try:
+                pkg = discover_result_package(run.workspace_directory)
+                lines = pkg.summary_lines()
+            except Exception:
+                lines = []
+            if lines:
+                with results_out:
+                    print("\nDA outputs (from results/*.h5):")
+                    for line in lines:
+                        print(" -", line)
 
         def _on_icesee_tail_selected_run():
             run = icesee_runs_manager.selected_run()
