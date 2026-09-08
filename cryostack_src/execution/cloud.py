@@ -213,7 +213,7 @@ class CloudBackend(
         self,
         *,
         job_id: str,
-        region: str = "us-east-2",
+        region: str | None = None,
         profile: str | None = None,
         **kwargs,
     ) -> ExecutionStatus:
@@ -253,7 +253,7 @@ class CloudBackend(
                 "provider": "aws",
                 "region": (
                     region
-                    or "us-east-2"
+                    or self.region
                 ),
                 "log_stream": (
                     result.get(
