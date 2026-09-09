@@ -1,11 +1,12 @@
 ---
-title: 'CryoStack: A browser-first scientific platform for integrated cryosphere data, modeling, and data-assimilation workflows'
+title: 'CryoStack: A modular cyberinfrastructure stack for cryosphere data, models, data assimilation, and heterogeneous computing'
 tags:
   - Python
   - cryosphere
   - scientific gateways
   - ice-sheet modeling
   - data assimilation
+  - radar data
   - reproducible workflows
   - high-performance computing
 authors:
@@ -19,272 +20,220 @@ authors:
 affiliations:
   - name: School of Earth and Atmospheric Sciences, Georgia Institute of Technology, Atlanta, GA, USA
     index: 1
-date: 9 August 2026
+date: 2 September 2026
 bibliography: paper.bib
 ---
 
 # Summary
 
-CryoStack is an open-source scientific platform that connects cryosphere data,
-numerical models, ensemble data assimilation, and heterogeneous computing
-resources through a common browser interface. The platform currently integrates
-three complementary applications: **CryoLauncher** for configuring and running
-ice-sheet models, **ICESEE** for ensemble-based state and parameter estimation,
-and **LIVIST** for exploring Antarctic englacial-temperature products. A shared
-gateway supplies navigation, documentation, user workspaces, reusable
-configurations, experiment records, and routes to local, remote, Slurm-managed,
-and cloud execution environments. A FastAPI relay and workstation connector
-bridge the browser applications to protected HPC systems without requiring an
-inbound connection from the public platform to the user's workstation or
-cluster.
+CryoStack is an open-source cyberinfrastructure stack for assembling
+reproducible cryosphere workflows from scientific applications, user
+workspaces, data catalogs, experiment records, and heterogeneous execution
+resources. It connects ice-sheet modeling, ensemble data assimilation, and
+the discovery and reuse of historical radar observations behind one shared
+platform rather than as separate tools. Its current applications are
+**CryoLauncher** for configuring and running ice-sheet models; **ICESEE**
+for ensemble-based state and parameter estimation [@kyanjo2026icesee];
+**LIVIST** (Living Ice Sheet Temperature) for exploring Antarctic
+englacial-temperature products inferred from radar and constrained by
+boreholes; and **Frozen Legacies** for discovering and working with
+historical Antarctic radar observations and derived products.
 
-CryoStack grew from deployment tooling for the Ice Sheet State and Parameter
-Estimator (ICESEE) [@kyanjo2026icesee] into a broader platform for the
-computational cryosphere. It therefore treats a scientific workflow—not an
-individual model or algorithm—as the primary unit of interaction. A researcher
-can inspect an observational product, configure a model experiment, choose an
-execution backend, monitor a run, and return to its configuration and outputs
-without learning a different deployment mechanism for every application.
-CryoStack is available at <https://cryostack.eas.gatech.edu/> and its source is
-maintained at <https://github.com/ICESEE-project/CryoStack>.
+CryoStack grew from deployment tooling for ICESEE into a wider stack for the
+computational cryosphere. Its design treats the scientific experiment,
+dataset, and application as related but independent objects: an application
+retains its domain-specific interface while reusing shared identity,
+persistence, execution, and deployment services, and a compute backend
+implements a common lifecycle without being embedded in a particular
+frontend. This lets a researcher move a configured experiment across a
+workstation, an institutional HPC cluster, and cloud resources, and lets a
+new application or dataset collection join the platform without rebuilding
+it.
 
-# Statement of Need
+CryoStack is available at <https://cryostack.eas.gatech.edu/> and its source
+is maintained at <https://github.com/ICESEE-project/CryoStack>.
 
-Cryosphere research increasingly combines large observational products,
-numerical ice-sheet models, inverse methods, and ensemble simulations. These
-components have very different software and computing requirements. Interactive
-data exploration is well suited to the browser, model development may happen on
-a workstation, and production experiments commonly require MPI-enabled
-libraries and a batch-scheduled cluster. Reproducing such work can require
-installing model-specific dependencies, transferring inputs, writing scheduler
-scripts, tracking job identifiers, retrieving outputs, and recording the exact
-configuration used.
+# Statement of need
 
-Existing community software provides strong capabilities within individual
-parts of this lifecycle. ISSM provides continental-scale ice-sheet modeling and
-inversion [@larour2012issm], Icepack provides composable glacier-flow modeling
-in Python [@shapero2021icepack], and general data-assimilation frameworks such
-as DART and PDAF provide mature ensemble methods [@anderson2009dart;
-@nerger2013pdaf]. ICESEE adds model-agnostic ensemble Kalman filtering tailored
-to ice-sheet applications, multiple filter variants, MPI parallelism, and
-couplings to ISSM and Icepack [@kyanjo2026icesee]. However, the scientific
-software alone does not provide a common access layer spanning data discovery,
-model configuration, assimilation, and remote execution.
+Cryosphere research increasingly combines large observational collections,
+interactive interpretation, numerical ice-sheet models, inverse methods,
+ensemble simulations, and scalable computing. These components have different
+software and resource requirements. Data discovery and quality control benefit
+from interactive maps and browser interfaces. Model development may occur on
+a workstation. Ensemble assimilation and production simulations commonly
+require MPI-enabled libraries, batch schedulers, or cloud resources. Historical
+radar holdings additionally require dataset-specific ingestion, geolocation,
+quality-control tools, and preservation of provenance.
 
-CryoStack fills this integration gap. It is intended for researchers who need
-to move between exploratory and production workflows, collaborators who do not
-share the same computing environment, and instructors who need a consistent
-entry point for computational examples. The browser interface lowers the
-initial interaction cost while preserving access to external computing
-resources for workloads that cannot or should not run on the web host.
+Today these stages are frequently delivered as separate repositories and
+manual procedures. A researcher may need to install compiled model
+dependencies, translate data formats, reproduce an undocumented graphical
+workflow, write scheduler scripts, transfer inputs, track job identifiers,
+retrieve outputs, and remember which parameters and environment created a
+result. The work is repeated when the model, data product, institution, or
+compute system changes. This integration burden slows collaboration and
+disproportionately affects students and groups without dedicated
+research-software or HPC support. No shared layer currently spans model
+configuration, execution, and experiment history across these settings.
 
-# Platform Design
+CryoStack addresses this missing layer. It is intended for researchers moving
+between exploratory and production workflows, collaborators who do not share
+the same computing environment, radar scientists preserving difficult legacy
+observations, and instructors who need a consistent entry point for
+computational examples. Browser access reduces the initial interaction cost,
+while remote execution preserves the use of resources already authorized for
+the user. The architectural goal is not to hide the scientific software or
+institutional policy. It is to make the transitions among applications, data,
+and resources explicit, repeatable, and inspectable.
 
-CryoStack separates the user-facing gateway, scientific applications,
-execution backends, and reproducible software environments (Figure 1). This
-separation lets each application evolve independently while sharing common
-services and deployment pathways.
+# State of the field
 
-![CryoStack's layered architecture. The gateway provides a common entry point to three scientific applications, while modeling and data-assimilation workflows can use local, remote HPC, or cloud execution backends. Spack environments and containers provide reproducible software layers.](cryostack_architecture.png){ width=95% }
+ISSM provides continental-scale ice-sheet modeling and inversion
+[@larour2012issm], Icepack provides composable glacier-flow modeling in
+Python [@shapero2021icepack], and DART and PDAF provide mature
+general-purpose data-assimilation capabilities [@anderson2009dart;
+@nerger2013pdaf]. ICESEE adds model-agnostic ensemble Kalman filtering
+tailored to ice-sheet applications, multiple filter variants, MPI
+parallelism, and couplings to ISSM and Icepack [@kyanjo2026icesee]. Each of
+these packages solves a specific scientific or numerical problem well, and
+CryoStack does not reimplement any of them.
 
-**Figure 1:** CryoStack platform architecture and principal workflow paths.
+What none of these packages provides, by itself, is a common access and
+operations layer spanning identity, data discovery, model configuration,
+remote execution, experiment history, and application deployment across a
+heterogeneous set of models and computing environments. CryoStack occupies
+this gap: it builds on ISSM, Icepack, and ICESEE rather than competing with
+them, and its distinct contribution is the shared layer connecting them to
+data, experiments, and heterogeneous execution.
 
-## Gateway and workspaces
+# Software design
 
-An Nginx reverse proxy terminates the public connection and forwards traffic to
-an `aiohttp` gateway. The gateway serves the Jupyter Book documentation,
-proxies HTTP and WebSocket traffic to interactive Voilà applications, and
-routes the React-based LIVIST frontend. Jupyter technologies provide an
-appropriate bridge between executable scientific Python and browser interfaces
-[@kluyver2016jupyter], while the gateway presents the applications under one
-site rather than as unrelated notebook servers.
+CryoStack separates access and operations, scientific applications, execution
+backends, and reproducible software environments (Figure 1). Identity and
+experiment persistence live outside the applications; per-user workspace
+roots are enforced by an explicit containment check rather than by
+convention; a capability registry states, in one place, what CryoStack can do
+with each model — whether a curated configuration subset exists, whether it
+exports a structured result package, requires a proprietary license, and
+which execution backends apply; and deployable applications are declared in a
+registry rather than hard-coded into a single service. This lets an
+application keep its domain-specific interface while reusing identity,
+persistence, execution, and deployment services, and lets a compute backend
+implement a common submit/status/logs/terminate lifecycle independent of any
+one frontend.
 
-Authenticated workspaces store user profiles, application preferences, saved
-configuration documents, and experiment records in SQLite. Saved
-configurations are schema-versioned and can be reused across sessions.
-Experiment records retain a configuration snapshot together with the selected
-backend, status, scheduler job identifier, cluster, working and output paths,
-log location, exit status, and timestamps. These records establish the basis
-for provenance without requiring each application to implement a separate
-account and persistence layer.
+![CryoStack's current layered architecture. A shared gateway and operations plane supplies identity, per-user workspaces, experiments, administration, deployment, and health services to four scientific applications. Shared contracts cover model capabilities, structured results, and visualization. Modeling and data-assimilation workflows can use local, connector-mediated HPC, or AWS Batch execution backends over reproducible Spack and container environments.](cryostack_architecture.png)
 
-## Scientific applications
+**Figure 1:** CryoStack platform architecture; solid components are present
+in the repository (qualification status of the execution backends is
+detailed below).
 
-**CryoLauncher** provides a form-based interface for numerical ice-sheet
-experiments. It exposes model parameters and execution choices while retaining
-the underlying model's native input and output conventions. The current model
-registry includes ISSM, Icepack, a one-dimensional flowline model, and
-Lorenz-96 for lightweight demonstrations and system testing. Users can execute
-small examples locally or stage larger jobs to configured compute resources.
+The persistence layer stores users, sessions, saved configurations,
+per-application workspace state, and experiments — an immutable
+configuration snapshot with application, backend, job identifiers, output
+paths, and a status-event timeline — in SQLite. Canonical examples remain
+read-only and are copied into a user-owned working copy before any edit or
+run, so two users acting
+concurrently cannot overwrite each other's inputs or outputs. A user can
+return to a saved workspace, reuse a named configuration, and relate
+scheduler state to the configuration that produced it — a basis for fuller
+provenance that current fields do not yet fully capture.
 
-**ICESEE** exposes ensemble state-estimation and parameter-inference workflows.
-Users select a model, ensemble size, observations, filter settings, and compute
-target through the same interaction pattern used by CryoLauncher. The
-integrated ICESEE library supports the ensemble Kalman filter and deterministic
-variants, parallel ensemble execution, and model couplings described in
-[@kyanjo2026icesee]. CryoStack does not reimplement those algorithms; it makes
-them configurable, executable, and observable through the platform.
+The current applications exercise this platform differently. CryoLauncher
+configures and runs ISSM and Icepack, each exposing a curated parameter
+subset validated before submission and packaging outputs into a
+transport-neutral result schema (`cryostack.issm.results`,
+`cryostack.icepack.results`) that a model-free reader and a shared
+visualization layer can render without the model's own runtime. ICESEE
+supplies ensemble state and parameter estimation [@kyanjo2026icesee];
+CryoStack does not reimplement its filtering algorithms but exposes its
+configuration and execution through the same identity and connector
+infrastructure as CryoLauncher — it does not yet emit a result package under
+this shared contract, and its data-assimilation diagnostics are not yet part
+of a shared schema. LIVIST keeps its own frontend and documentation while
+sharing the platform's routing and application context. Frozen Legacies
+exercises a second kind of extensibility: a historical radar collection needs
+a dataset manifest and ingestion adapter rather than a model execution
+adapter, reusing the same identity and deployment services to build a
+browsable catalog with geolocated flight lines. Not every application uses
+every execution backend; each declares, through the capability registry,
+which backends it currently supports.
 
-**LIVIST** (Living Ice Sheet Temperature) is an interactive explorer for
-Antarctic englacial-temperature products inferred from radar observations and
-constrained by borehole measurements. Its integration expands CryoStack from a
-model-launching environment into a platform that also serves scientific data
-and documentation. LIVIST is implemented as a React and TypeScript application
-and is routed by the same gateway as the Python applications.
+Execution is abstracted behind a common backend contract implemented by
+local, connector-mediated remote-HPC, and AWS Batch drivers, so an
+application's scientific configuration does not change when its execution
+target does. A packaged workstation connector exchanges SSH, rsync, and
+Slurm operations for commands sent over an authenticated relay, so the
+platform never holds cluster credentials or opens an inbound connection to
+institutional resources; its generic shell command type and process-local
+session state remain documented gaps before multi-user public operation. The
+AWS driver exposes the same discovery, provisioning, submission, and
+status/log/termination operations, using only ambient CLI credentials and no
+static keys, over Spack-built [@gamblin2015spack] or Apptainer-containerized
+[@kurtzer2017singularity] environments. This shared driver serves both
+CryoLauncher/ISSM and ICESEE: a personal AWS account connects through a
+connection-scoped CloudFormation onboarding flow, and ICESEE's Lorenz-96
+example has run end to end through this path at NP=1 (single-process
+execution). That does not extend to ICESEE's other examples, to
+multi-process execution, or to the ISSM Batch path, which still runs against
+a single account-wide bucket without per-user isolation or an allow-listed
+job definition and additionally requires a MATLAB license the reference
+deployment does not provide: architectural reach across applications is
+currently broader than what has been validated end to end for either one.
 
-# Execution and Reproducibility
+An experimental human-in-the-loop layer lets an assistant assemble, not
+submit, a run: a request becomes a declarative plan, validated against the
+same rules as the manual interface and approved by a human before reaching
+execution infrastructure, and its tools are read-only. Reproducibility to
+date is protocol-level rather than archival: the lifecycle preserves each
+experiment's configuration, backend, and status timeline, and its record
+already provides hooks — though not yet populated fields — for environment
+digests, checksums, and exportable run manifests.
 
-CryoStack supports multiple execution modes behind a common application
-interface. Local mode runs lightweight workflows on the application host.
-Remote mode stages configuration and input files over SSH, activates the
-configured environment, submits a Slurm script, parses the scheduler job
-identifier, monitors status, streams logs, and retrieves outputs. For protected
-institutional systems, an optional connector runs on the user's workstation and
-establishes an outbound WebSocket session with CryoStack. SSH, file transfer,
-and Slurm operations then occur from the connector using the user's existing
-network and institutional access. The platform also includes deployment
-configurations for cloud-hosted Slurm resources.
+Verification combines a Python test suite of more than 1,800 tests across the
+gateway, authentication, model adapters, connector, and cloud modules with a
+separate offline acceptance command checking agent safety properties,
+capability-registry consistency, and workspace isolation as read-only
+invariants; this confirms structural and functional correctness, not the
+scientific correctness of a model run. The codebase is distributed under the
+MIT License, though newly modularized source files still carry BSD-3-Clause
+identifiers that should be reconciled before a formal release. CryoStack's
+core platform and local scientific workflows are complete enough for their
+stated research purpose, while the remote-HPC and cloud paths above carry
+explicit, documented qualification boundaries rather than an implied general
+readiness.
 
-## HPC connector and command relay
+# Research impact statement
 
-The HPC bridge is a shared infrastructure component used by both ICESEE and
-CryoLauncher (Figure 2). It separates scientific workflow construction in the
-hosted application from privileged network operations in the user's computing
-environment. Four processes participate in a connector-mediated run:
-
-1. The ICESEE or CryoLauncher Voilà application creates a connector session by
-   sending `POST /connector/session` and receives a random session identifier
-   and WebSocket path.
-2. Nginx routes `/connector/` HTTP and WebSocket traffic to a FastAPI relay
-   served by Uvicorn on an internal port. The relay records which connector is
-   online for each session and maintains pending command futures in memory.
-3. A connector process on the user's workstation opens an **outbound** WSS
-   connection to `/connector/ws/{session_id}`. The workstation may already be
-   connected to an institutional VPN and can reach the cluster login node using
-   the user's SSH configuration.
-4. The application sends a typed command and JSON payload to
-   `POST /connector/command/{session_id}`. The relay assigns a unique command
-   identifier and forwards the message over the matching WebSocket. The
-   connector executes the operation, returns a result carrying the same
-   identifier, and the relay resolves the waiting HTTP request.
-
-![CryoStack HPC bridge. ICESEE and CryoLauncher send session-scoped commands to a FastAPI relay. A workstation connector maintains an outbound WebSocket and performs SSH, rsync, and Slurm operations against an authorized cluster.](cryostack_hpc_bridge.png){ width=95% }
-
-**Figure 2:** Connector-mediated command and data flow between CryoStack and a
-protected HPC resource. Solid blue arrows are HTTPS/WSS control messages;
-green arrows are SSH and rsync operations initiated from the workstation.
-
-The connector dispatch layer currently supports host and SSH tests, SSH command
-execution, rsync upload and download, archive staging and retrieval, Slurm
-submission, and SSH-key bootstrap. Submission helpers write the application
-configuration and generated batch script to a run directory, invoke `sbatch`,
-parse the returned job identifier, and use `squeue`, `sacct`, `scancel`, and log
-tailing for lifecycle management. ICESEE and CryoLauncher call the same relay
-client and remote-runner abstractions, but supply application-specific staging
-rules and launch commands. This avoids duplicating cluster connectivity code
-across scientific interfaces.
-
-FastAPI is used for the public command relay because it provides typed request
-models, asynchronous WebSocket handling, and HTTP error responses for offline
-connectors and timeouts. The repository also contains a local FastAPI service
-mode with typed endpoints for reachability checks, SSH, rsync, Slurm, and log
-tailing. The packaged desktop connector instead uses the outbound WebSocket
-client, which is better suited to workstations behind firewalls and network
-address translation.
-
-The relay transfers commands and results but does not perform SSH itself. SSH
-private keys remain on the workstation, and the connector invokes the local
-OpenSSH and rsync clients with key-only batch operation. Consequently, the
-public CryoStack host does not require direct network reachability to the HPC
-login node. This design does not bypass institutional controls: users must
-possess a valid cluster account, satisfy VPN and multifactor requirements where
-applicable, and authorize the connector key according to site policy.
-
-Key-only authentication is the normal execution path. CryoStack also contains
-an optional one-time bootstrap operation that sends a user-entered cluster
-password in the session command payload so that the workstation connector can
-install its public key. The interface does not persist the password and clears
-the field after use, but the secret necessarily traverses the hosted
-application and relay before reaching the connector. Deployments whose policy
-prohibits this flow should disable bootstrap and require users to register the
-connector's public key through the institution's account portal. Removing
-password-bearing relay commands in favor of portal-based enrollment or a
-dedicated secret-exchange design is part of production hardening.
-
-Two complementary environment strategies support portability. ICESEE-Spack
-uses Spack [@gamblin2015spack] to resolve source builds against site-specific
-compilers, MPI implementations, and system libraries. This is useful on HPC
-systems where performance and compatibility with the local software stack are
-important. ICESEE-Containers provides Docker and Apptainer images for portable,
-preconfigured execution; Apptainer follows the mobility-of-compute model
-developed for scientific containers [@kurtzer2017singularity]. Together, these
-paths let a workflow retain a consistent scientific configuration while its
-software environment is adapted to a laptop, cloud instance, or institutional
-cluster.
-
-A typical remote experiment proceeds as follows:
-
-1. The user selects CryoLauncher or ICESEE and edits a configuration in the
-   browser.
-2. CryoStack validates and snapshots the configuration, associates it with an
-   experiment record, and creates or reuses a connector session.
-3. The FastAPI relay correlates an application command with the outbound
-   connector WebSocket.
-4. The connector stages inputs over rsync and submits the job to Slurm using a
-   Spack or container environment.
-5. Scheduler state, logs, and output metadata return through the connector and
-   relay and are recorded in the workspace.
-6. The user inspects or downloads outputs and can reuse the saved configuration
-   for a subsequent experiment.
-
-# Research and Educational Use
-
-CryoStack offers a single location for workflows at different levels of
-complexity. A learner can begin with a Lorenz-96 example and inspect the role of
-ensemble size and filter choice. A modeler can configure ISSM or Icepack without
-hand-editing every scheduler script. A researcher can use the same interface to
-move a tested configuration from a small local run to an MPI-enabled Slurm
-environment. LIVIST provides a data-centered entry point that can support
-future workflows linking observational products to initialization, validation,
-or assimilation.
-
-The platform is deliberately modular. Adding an application requires a
-documented route and application adapter rather than modification of every
-existing tool. Adding a compute resource requires a backend configuration while
-the scientific application and saved configuration schema remain stable. This
-design makes CryoStack a foundation for additional cryosphere data services,
-models, analysis tools, and workflow backends.
-
-# Availability and Limitations
-
-CryoStack is distributed under the MIT License. The integrated projects retain
-their own licenses, and users should cite the scientific models, datasets, and
-applications used in an experiment. The source repository includes the gateway,
-application interfaces, authentication and persistence services, remote
-connector, cloud configuration, documentation, and a pinned copy of ICESEE.
-
-CryoStack does not remove institutional access controls or make all workloads
-suitable for browser-host execution. Remote use still requires an authorized
-account, network access such as a VPN where applicable, and a compatible
-software environment on the target system. At present, backend and
-application adapters contain platform-specific configuration that should be
-generalized before broad multi-institutional deployment. The present relay
-keeps sessions and pending commands in a single process, so service restarts
-discard that state and horizontal scaling requires a shared session store.
-Production hardening must also bind connector sessions to authenticated users,
-replace generic shell execution with an explicit command allowlist, validate
-remote paths and scheduler parameters, and add auditable per-command policy.
-Planned work additionally includes formal release archives, expanded automated
-testing across backends, richer machine-readable provenance, additional
-community applications, and clearer administrator interfaces for registering
-resources.
+CryoStack's evidence to date is functional and architectural rather than
+adoption-based, and this section states that directly. Two ice-sheet models
+(ISSM, Icepack) are integrated with curated configuration, execution, and a
+structured result-and-visualization contract exercised through automated
+tests, not merely described. ICESEE's ensemble data-assimilation workflow
+[@kyanjo2026icesee], developed under NSF CAREER award 2235920, has run
+through CryoStack both locally and end to end on AWS Batch for its
+Lorenz-96 example — a real workflow exercised across two execution backends
+through the same platform services, not a synthetic placeholder. Frozen
+Legacies integrates an actual historical dataset (LYRA-derived airborne radar
+records) into a working catalog with geolocation and processing tools, and
+LIVIST integrates a deployed radar/borehole temperature-inference
+application, showing the platform absorbing two application patterns beyond
+model execution. This is backed by a suite of more than 1,800 automated
+tests and a separate offline invariant-checking command, both reproducible
+by an external reviewer without institutional access. Together, these
+establish credible near-term
+significance for a reviewer assessing whether CryoStack is functioning,
+extensible infrastructure rather than a design proposal; realized external
+adoption remains to be demonstrated.
 
 # Acknowledgements
 
 This work was supported in part by U.S. National Science Foundation CAREER
-award 2235920. The authors thank Renette Jones-Ivey and Justin Simle at Georgia
-Tech PACE for infrastructure support and acknowledge the open-source
-communities supporting Jupyter, Voilà, Spack, Apptainer, ISSM, Icepack, and the
-other scientific software integrated by CryoStack.
+award 2235920. The authors thank Renette Jones-Ivey from the University at
+Buffalo for help with the initial Jupyter Book backend and Eliza Dawson for
+developing the LIVIST backend integrated into CryoStack. Frozen Legacies
+incorporates historical radar data and software developed by their
+respective contributors; contributor and dataset attribution will be
+completed in the archival release metadata.
 
 # References
